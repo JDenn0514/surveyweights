@@ -18,7 +18,7 @@ of decision Q8 of the replicate phase.
 
 ## PR map
 
-- [ ] PR 1: `fix/sdr-forward-use-normal-hadamard` — forward
+- [x] PR 1: `fix/sdr-forward-use-normal-hadamard` — forward
       `use_normal_hadamard` to the SDR back end, and correct the published
       variance formula
 
