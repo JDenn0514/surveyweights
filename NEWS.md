@@ -130,6 +130,15 @@
 
 ## Internal
 
+* No test held `create_sdr_weights()` to the SDR variance scale factor
+  (#126). The help page states `4 / R`, and PR #124 corrected it there, but
+  nothing tied that number to the object the function returns. A new block in
+  `tests/testthat/test-replicate-weights.R` asserts the scale two ways: a
+  fixed pin, `4 / 32` on a 20-PSU design at `replicates = 20L`, and the
+  relation `scale == 4 / length(repweights)` over both settings of
+  `use_normal_hadamard` and three more replicate counts. `R` is the full
+  column count, inactive replicates included. No code changed.
+
 * `test_invariants()` in `tests/testthat/helper-test-data.R` never checked a
   `survey_nonprob` object (#117). The branch for that class tested a bare
   class name behind a guard: `exists("survey_nonprob") &&
