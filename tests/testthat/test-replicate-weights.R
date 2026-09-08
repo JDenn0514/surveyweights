@@ -1340,6 +1340,29 @@ test_that("create_sdr_weights() inactive replicate count stays low on a 9999-PSU
   expect_identical(sdr_n_inactive(sdr_quiet(cps, replicates = 100L)), 0L)
 })
 
+test_that("create_sdr_weights() sets @variables$scale to 4 / R", {
+  skip_if_not_installed("svrep")
+  td <- make_taylor_design()
+  first <- sdr_quiet(td, replicates = 20L)
+  test_invariants(first)
+
+  # R is the full column count, inactive replicates included. An inactive
+  # column adds a zero term to the variance sum, so the scale counts it.
+  expect_length(first@variables$repweights, 32L)
+  expect_equal(first@variables$scale, 4 / 32, tolerance = 1e-10)
+
+  for (r in c(32L, 40L, 64L)) {
+    for (unh in c(FALSE, TRUE)) {
+      res <- sdr_quiet(td, replicates = r, use_normal_hadamard = unh)
+      expect_equal(
+        res@variables$scale,
+        4 / length(res@variables$repweights),
+        tolerance = 1e-10
+      )
+    }
+  }
+})
+
 test_that("create_sdr_weights() matches svrep at use_normal_hadamard = TRUE", {
   skip_if_not_installed("svrep")
   td <- make_taylor_design(seed = 1L)
