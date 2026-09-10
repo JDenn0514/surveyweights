@@ -7,7 +7,8 @@ description: >
   "draft the plan", "review the plan", "resolve plan issues", or "implementation
   plan". Always runs after spec-workflow is complete. Three-stage workflow:
   draft → adversarial review → resolve + log. After Stage 3 is complete,
-  hand off to /r-implement.
+  hand off to /pipeline-ship (for hard builder/tester isolation) or /r-implement
+  (for lightweight single-agent implementation).
 ---
 
 # Surveyverse Implementation Workflow
@@ -16,7 +17,9 @@ description: >
 
 This skill governs implementation plan work for surveywts. Three stages, always in order:
 
-1. **Stage 1 — Draft:** Write the implementation plan from the finalized spec
+1. **Stage 1 — Draft:** Write the implementation plan from the finalized spec.
+   If `plans/test-spec-{id}.md` exists (from the pipeline workflow), note that
+   both spec and test-spec are inputs — the plan should reference both.
 2. **Stage 2 — Review:** Adversarial batch pass; saves all issues to a file
 3. **Stage 3 — Resolve:** Interactively work through issues and log decisions
 
@@ -26,7 +29,7 @@ digraph impl_stages {
     S1 [label="Stage 1\nDraft Plan", shape=box];
     S2 [label="Stage 2\nAdversarial Review", shape=box];
     S3 [label="Stage 3\nResolve + Log", shape=box];
-    done [label="→ /r-implement", shape=doublecircle];
+    done [label="→ /pipeline-ship\nor /r-implement", shape=doublecircle];
 
     S1 -> S2;
     S2 -> S3 [label="issues found"];
@@ -37,9 +40,10 @@ digraph impl_stages {
 ```
 
 <HARD-GATE>
-Do not hand off to `/r-implement` until Stage 3 is complete, all issues in
-`plans/plan-review-{id}.md` are resolved, and `plans/decisions-{id}.md` is
-populated. No implementation begins until the plan is fully approved.
+Do not hand off to `/pipeline-ship` or `/r-implement` until Stage 3 is
+complete, all issues in `plans/plan-review-{id}.md` are resolved, and
+`plans/decisions-{id}.md` is populated. No implementation begins until the
+plan is fully approved.
 </HARD-GATE>
 
 ---
@@ -90,16 +94,18 @@ each step.
 
 ## Rules in Context
 
-Every stage works alongside — never instead of — these rule files:
+These standards files live in `.claude/standards/` and do **not** auto-load.
+Read the one you need before a stage relies on it — do not assume it is
+already in context:
 
-| Rule file | What it governs |
+| Standards file | What it governs |
 |---|---|
-| `code-style.md` | Indentation, pipe, air formatter, S7 patterns, cli error structure, argument order, helper placement |
-| `r-package-conventions.md` | `::` usage, NAMESPACE, roxygen2, `@return`, `@examples`, export policy |
-| `surveywts-conventions.md` | Naming patterns (`get_*`, `extract_*`, `set_*`), `@family`, return visibility, haven handling |
-| `testing-standards.md` | `test_that()` scope, 98% coverage, assertion patterns, data generators |
-| `testing-surveywts.md` | `test_invariants()`, layer 1 vs layer 3 error testing, `make_survey_data()`, numerical tolerances |
-| `github-strategy.md` | Branch naming, PR granularity, commit format, merge strategy |
+| `.claude/standards/code-style.md` | Indentation, pipe, air formatter, S7 patterns, cli error structure, argument order, helper placement |
+| `.claude/standards/r-package-conventions.md` | `::` usage, NAMESPACE, roxygen2, `@return`, `@examples`, export policy |
+| `.claude/standards/surveywts-conventions.md` | Naming patterns (`get_*`, `extract_*`, `set_*`), `@family`, return visibility, haven handling |
+| `.claude/standards/testing-standards.md` | `test_that()` scope, 98% coverage, assertion patterns, data generators |
+| `.claude/standards/testing-surveywts.md` | `test_invariants()`, layer 1 vs layer 3 error testing, `make_survey_data()`, numerical tolerances |
+| `.claude/standards/github-strategy.md` | Branch naming, PR granularity, commit format, merge strategy |
 
 ---
 

@@ -2,86 +2,186 @@
 % Please edit documentation in R/calibrate.R
 \name{calibrate}
 \alias{calibrate}
-\title{Calibrate survey weights to known population totals}
+\title{Adjust weights to match population totals}
 \usage{
 calibrate(
   data,
-  variables,
-  population,
+  targets,
   weights = NULL,
-  wt_name = "wts",
-  method = c("linear", "logit"),
+  wt_name = NULL,
   type = c("prop", "count"),
-  control = list(maxit = 50, epsilon = 1e-07)
+  reference_design = NULL,
+  ...,
+  method = c("rake", "linear", "logit")
 )
 }
 \arguments{
-\item{data}{A \code{data.frame}, \code{weighted_df}, \code{survey_taylor}, or
-\code{survey_nonprob}. \code{survey_replicate} -> error. Any other class -> error.}
+\item{data}{A \code{survey_nonprob}, \code{survey_taylor}, or \code{survey_replicate}.
+Forwarded unchanged to the dispatched function. For \code{survey_replicate}
+inputs, calibration is applied to every replicate weight column using the
+same \code{targets}; see the dispatched function for replicate weight handling
+details.}
 
-\item{variables}{<\code{\link[tidyselect:language]{tidy-select}}> Columns to
-calibrate on. Must be categorical (character or factor). Specify as a
-bare name or \code{c(var1, var2, ...)}.}
+\item{targets}{Target specification. Forwarded to the dispatched function.
+Two formats are accepted:
 
-\item{population}{Named list of population targets. Names must match the
-column names selected by \code{variables}. Each element: a named numeric
-vector \code{c(level = target, ...)}.
+\strong{Format A — named list} (one element per calibration variable):
 
-For \code{type = "prop"}: values must sum to 1.0 (within \code{1e-6} tolerance).
-For \code{type = "count"}: values must be strictly positive.}
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{list(
+  sex   = c("Male" = 0.49, "Female" = 0.51),
+  age_f3 = c("18-34" = 0.30, "35-54" = 0.33, "55+" = 0.37)
+)
+}\if{html}{\out{</div>}}
 
-\item{weights}{<\code{\link[tidyselect:language]{tidy-select}}> Weight column name
-(bare name). \code{NULL} -> auto-detected from \code{weighted_df} attribute or
-survey object \verb{@variables$weights}. For plain \code{data.frame} with
-\code{weights = NULL}, uniform starting weights are used and the output
-column is named by \code{wt_name} (default \code{"wts"}).}
+\strong{Format B — long data frame} with columns \code{variable}, \code{level}, \code{target}:
 
-\item{wt_name}{Character scalar. Name of the output weight column in the
-returned \code{weighted_df}. Default \code{"wts"}. Ignored when \code{data} is a survey
-object (\code{survey_taylor} or \code{survey_nonprob}).}
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{data.frame(
+  variable = c("sex", "sex", "age_f3", "age_f3", "age_f3"),
+  level    = c("Male", "Female", "18-34", "35-54", "55+"),
+  target   = c(0.49, 0.51, 0.30, 0.33, 0.37)
+)
+}\if{html}{\out{</div>}}
 
-\item{method}{Character scalar. \code{"linear"} (default): one-step exact
-GREG calibration (may produce negative weights). \code{"logit"}: bounded
-iterative calibration (always positive).}
+Format B is auto-detected and converted to Format A before dispatch.
+See \code{\link[=calibrate_rake]{calibrate_rake()}}, \code{\link[=calibrate_linear]{calibrate_linear()}}, or \code{\link[=calibrate_logit]{calibrate_logit()}}
+for per-method target validation rules.}
 
-\item{type}{Character scalar. \code{"prop"} (default): \code{population} values
-are proportions. \code{"count"}: \code{population} values are counts.}
+\item{weights}{<\code{\link[tidyselect:language]{tidy-select}}> Weight column
+(bare name). Forwarded to the dispatched function. \code{NULL} (the default)
+auto-detects the weight column from survey object \verb{@variables$weights}.}
 
-\item{control}{Named list of convergence parameters. Merged with defaults
-\code{list(maxit = 50, epsilon = 1e-7)}. Omitted keys retain their defaults.}
+\item{wt_name}{\code{NULL} (the default) or a \code{character(1)}. When \code{NULL},
+calibrated weights overwrite the existing weight column in place. When a
+character string, a new column is added and \verb{@variables$weights} updated.
+Forwarded to the dispatched function.}
+
+\item{type}{\code{character(1)}. \code{"prop"} (the default): \code{targets} values are
+proportions. \code{"count"}: \code{targets} values are population counts. Forwarded
+to the dispatched function.}
+
+\item{reference_design}{A \code{survey_taylor} or \code{NULL} (the default). Stored
+in the weighting history for provenance. Forwarded to the dispatched
+function.}
+
+\item{...}{Additional arguments forwarded as-is to the dispatched function.
+See \code{\link[=calibrate_rake]{calibrate_rake()}}, \code{\link[=calibrate_linear]{calibrate_linear()}}, or \code{\link[=calibrate_logit]{calibrate_logit()}}
+for available arguments (e.g., \code{algorithm}, \code{bounds}, \code{cap}, \code{control}).}
+
+\item{method}{\code{character(1)}. Calibration method: \code{"rake"} (the default),
+\code{"linear"}, or \code{"logit"}. Matched with \code{\link[rlang:arg_match]{rlang::arg_match()}}.
+\itemize{
+\item \code{"rake"}: multiplicative raking via \code{\link[=calibrate_rake]{calibrate_rake()}}. Weights remain
+strictly positive. Two algorithms available via \code{algorithm} in \code{...}.
+\item \code{"linear"}: GREG estimator via \code{\link[=calibrate_linear]{calibrate_linear()}}. Exact in one step;
+may produce negative weights for large discrepancies.
+\item \code{"logit"}: logit-bounded calibration via \code{\link[=calibrate_logit]{calibrate_logit()}}. G-weight
+ratios constrained to an open interval \verb{(L, U)} via \code{bounds} in \code{...}.
+}}
 }
 \value{
-\itemize{
-\item \code{data.frame} or \code{weighted_df} input -> \code{weighted_df}
-\item \code{survey_taylor} or \code{survey_nonprob} input -> same class as input
-(\code{survey_taylor} or \code{survey_nonprob}; class is preserved)
-}
-
-The weight column in the output contains calibrated weights. A history
-entry with \code{operation = "calibration"} is appended to
-\code{weighting_history}.
+An object of the same class as \code{data}, as returned by the
+dispatched function. See \code{\link[=calibrate_rake]{calibrate_rake()}}, \code{\link[=calibrate_linear]{calibrate_linear()}}, or
+\code{\link[=calibrate_logit]{calibrate_logit()}} for class-specific return value details and
+weighting history guarantees.
 }
 \description{
-Adjusts survey weights so that the weighted marginal totals match known
-population values. Supports linear (GREG) and logit calibration methods
-for categorical auxiliary variables.
+A thin dispatcher that routes to \code{\link[=calibrate_rake]{calibrate_rake()}}, \code{\link[=calibrate_linear]{calibrate_linear()}},
+or \code{\link[=calibrate_logit]{calibrate_logit()}} based on \code{method}. All arguments are forwarded
+unchanged; all validation and error handling occur in the dispatched
+function.
+}
+\details{
+All three methods implement the Deville-Sarndal calibration framework:
+each adjusts survey weights so that weighted auxiliary totals match
+known population totals. The methods share a variance estimator and
+differ in the weight-ratio function \eqn{F} applied during calibration
+(Deville & Sarndal 1992; Deville, Sarndal & Sautory 1993). The value of
+\eqn{F} is the g-weight (the ratio of calibrated to starting weight).
+
+\strong{Raking} (\code{method = "rake"}, the default) uses the multiplicative
+function \eqn{F(u) = \exp(u)}, which keeps all calibrated weights
+strictly positive. For marginal targets, raking reduces to classical
+iterative proportional fitting (Deville, Sarndal & Sautory 1993). Two
+algorithms are available via \code{algorithm} (passed through \code{...}):
+\code{"classic_ipf"} (the default; chi-square variable selection ported
+from the ANES raking procedure, DeBell & Krosnick 2009) and \code{"nr"}
+(Newton-Raphson). The weight ratio \eqn{w_k / d_k} is unbounded above.
+
+\strong{Linear} (\code{method = "linear"}) uses \eqn{F(u) = 1 + u}, equivalent
+to the generalized regression (GREG) estimator. The solution is exact
+in a single step — no iteration required — making it the fastest method
+(Deville & Sarndal 1992). The weight ratio is unbounded in both
+directions; large sample-to-population discrepancies can produce
+negative calibrated weights.
+
+\strong{Logit} (\code{method = "logit"}) constrains the weight ratio
+\eqn{w_k / d_k} to the open interval \eqn{(L, U)} via a logit-bounded
+\eqn{F} function (Deville & Sarndal 1992; Deville, Sarndal & Sautory
+1993). Pass \code{bounds} via \code{...} to control the interval (default
+\code{c(1e-6, 1e6)}). Note that bounds apply to the ratio of calibrated to
+design weight, not to calibrated weights directly.
+
+Post-stratification does not route through \code{calibrate()}. When you
+have population values for every joint cell of the stratification
+variables — a full cross-tabulation, not separate margins — use
+\code{\link[=poststratify]{poststratify()}}, which matches those cells exactly in one pass.
+
+For full algorithm documentation, convergence criteria, and
+replicate-weight handling, see \code{\link[=calibrate_rake]{calibrate_rake()}},
+\code{\link[=calibrate_linear]{calibrate_linear()}}, and \code{\link[=calibrate_logit]{calibrate_logit()}}.
 }
 \examples{
-df <- data.frame(
-  age_group = c("18-34", "35-54", "55+", "18-34", "35-54"),
-  sex = c("M", "F", "M", "F", "M"),
-  stringsAsFactors = FALSE
-)
-pop <- list(
-  age_group = c("18-34" = 0.30, "35-54" = 0.40, "55+" = 0.30),
-  sex = c("M" = 0.48, "F" = 0.52)
-)
-result <- calibrate(df, variables = c(age_group, sex), population = pop)
+ns_wave1_svy <- surveycore::as_survey_nonprob(ns_wave1, weights = weight)
 
+targets_a <- list(
+  sex    = c("Male" = 0.49, "Female" = 0.51),
+  age_f3 = c("18-34" = 0.30, "35-54" = 0.33, "55+" = 0.37)
+)
+
+# Format A + rake (default) --------------------------------------------
+result <- calibrate(ns_wave1_svy, targets = targets_a)
+summarize_weights(result)
+
+# Format A + linear ----------------------------------------------------
+calibrate(ns_wave1_svy, targets = targets_a, method = "linear")
+
+# Format A + logit -----------------------------------------------------
+calibrate(ns_wave1_svy, targets = targets_a, method = "logit")
+
+# Format B + rake ------------------------------------------------------
+targets_b <- data.frame(
+  variable = c("sex", "sex", "age_f3", "age_f3", "age_f3"),
+  level    = c("Male", "Female", "18-34", "35-54", "55+"),
+  target   = c(0.49, 0.51, 0.30, 0.33, 0.37)
+)
+calibrate(ns_wave1_svy, targets = targets_b)
+}
+\references{
+DeBell, M. and Krosnick, J.A. (2009). Computing Weights for American
+National Election Study Survey Data. ANES Technical Report series,
+no. nes012427. Ann Arbor, MI, and Palo Alto, CA: American National
+Election Studies.
+
+Deville, J.-C. and Sarndal, C.-E. (1992). Calibration estimators in
+survey sampling. \emph{Journal of the American Statistical Association},
+87(418), 376--382.
+
+Deville, J.-C., Sarndal, C.-E. and Sautory, O. (1993). Generalized
+raking procedures in survey sampling. \emph{Journal of the American
+Statistical Association}, 88(423), 1013--1020.
+
+Kott, P.S. (2003). An overview of calibration weighting. 2003 Joint
+Statistical Meetings — Section on Survey Research Methods.
 }
 \seealso{
-Other calibration: 
-\code{\link{poststratify}()},
-\code{\link{rake}()}
+\code{\link[=calibrate_rake]{calibrate_rake()}}, \code{\link[=calibrate_linear]{calibrate_linear()}}, \code{\link[=calibrate_logit]{calibrate_logit()}},
+\code{\link[=poststratify]{poststratify()}}. For the class system, the standard workflows, and a
+glossary of terms, see the \href{https://jdenn0514.github.io/surveywts/articles/getting-started.html}{Getting started article}.
+
+Other calibration:
+\code{\link[=calibrate_linear]{calibrate_linear()}},
+\code{\link[=calibrate_logit]{calibrate_logit()}},
+\code{\link[=calibrate_rake]{calibrate_rake()}},
+\code{\link[=poststratify]{poststratify()}}
 }
 \concept{calibration}

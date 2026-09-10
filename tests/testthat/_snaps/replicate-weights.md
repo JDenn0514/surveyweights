@@ -68,16 +68,26 @@
       Error in `.validate_replicates_arg()`:
       x `replicates` must be a single number.
 
-# create_jackknife_weights() errors when random-groups needs replicates
+# create_jackknife_weights() errors when grouped needs replicates
 
     Code
-      create_jackknife_weights(td, type = "random-groups")
+      create_jackknife_weights(td, type = "grouped")
     Condition
       Error in `create_jackknife_weights()`:
-      x `replicates` is required when `type = "random-groups"`.
-      v Supply an integer, e.g. `replicates = 20L`.
+      x `replicates` is required when `type = "grouped"`.
+      v Supply an integer, e.g. `replicates = 50L`.
 
 # create_jackknife_weights() rejects data.frame input
+
+    Code
+      create_jackknife_weights(df)
+    Condition
+      Error in `.validate_replicate_input()`:
+      x `data` is a <data.frame>, not a survey design.
+      i This function requires a <survey_taylor> or <survey_nonprob> object.
+      v Convert with `surveycore::as_survey()`.
+
+---
 
     Code
       create_jackknife_weights(df)
@@ -96,16 +106,6 @@
       x `data` is already a <survey_replicate>.
       i Replicate weights cannot be created from a design that already has replicates.
 
-# create_jackknife_weights() rejects weighted_df input
-
-    Code
-      create_jackknife_weights(wdf)
-    Condition
-      Error in `.validate_replicate_input()`:
-      x `data` is a <weighted_df>, not a survey design.
-      i This function requires a <survey_taylor> or <survey_nonprob> object.
-      v Convert with `surveycore::as_survey()`.
-
 # create_jackknife_weights() rejects unsupported class
 
     Code
@@ -116,34 +116,44 @@
       i Supported classes: <survey_taylor> and <survey_nonprob>.
       v Use `surveycore::as_survey()` or `surveycore::survey_nonprob()`.
 
-# create_jackknife_weights() rejects fractional replicates for random-groups
+# create_jackknife_weights() rejects fractional replicates for grouped
 
     Code
-      create_jackknife_weights(td, replicates = 1.5, type = "random-groups")
+      create_jackknife_weights(td, replicates = 1.5, type = "grouped")
     Condition
       Error in `.validate_replicates_arg()`:
       x `replicates` must be a whole number, not 1.5.
       v Use an integer value, e.g. `replicates = 2`.
 
-# create_jackknife_weights() rejects replicates = 1 for random-groups
+# create_jackknife_weights() rejects replicates = 1 for grouped
 
     Code
-      create_jackknife_weights(td, replicates = 1L, type = "random-groups")
+      create_jackknife_weights(td, replicates = 1L, type = "grouped")
     Condition
       Error in `.validate_replicates_arg()`:
       x `replicates` must be at least 2, got 1.
 
-# create_jackknife_weights() rejects survey_nonprob + random-groups
+# create_jackknife_weights() rejects survey_nonprob + jkn
 
     Code
-      create_jackknife_weights(np, replicates = 10L, type = "random-groups")
+      create_jackknife_weights(np, type = "jkn")
     Condition
       Error in `create_jackknife_weights()`:
-      x <survey_nonprob> input is not supported with `type = "random-groups"`.
-      i Only `type = "delete-1"` is supported for non-probability designs.
-      v Use `type = "delete-1"` or convert to <survey_taylor>.
+      x <survey_nonprob> input is not supported with `type = "jkn"`.
+      i Only `type = "grouped"` is supported for non-probability designs.
+      v Use `type = "grouped"` with `replicates`, or convert to <survey_taylor>.
 
 # create_brr_weights() rejects data.frame input
+
+    Code
+      create_brr_weights(df)
+    Condition
+      Error in `.validate_replicate_input()`:
+      x `data` is a <data.frame>, not a survey design.
+      i This function requires a <survey_taylor> or <survey_nonprob> object.
+      v Convert with `surveycore::as_survey()`.
+
+---
 
     Code
       create_brr_weights(df)
@@ -161,16 +171,6 @@
       Error in `.validate_replicate_input()`:
       x `data` is already a <survey_replicate>.
       i Replicate weights cannot be created from a design that already has replicates.
-
-# create_brr_weights() rejects weighted_df input
-
-    Code
-      create_brr_weights(wdf)
-    Condition
-      Error in `.validate_replicate_input()`:
-      x `data` is a <weighted_df>, not a survey design.
-      i This function requires a <survey_taylor> or <survey_nonprob> object.
-      v Convert with `surveycore::as_survey()`.
 
 # create_brr_weights() rejects unsupported class
 
@@ -259,6 +259,16 @@
       i This function requires a <survey_taylor> or <survey_nonprob> object.
       v Convert with `surveycore::as_survey()`.
 
+---
+
+    Code
+      create_gen_boot_weights(df)
+    Condition
+      Error in `.validate_replicate_input()`:
+      x `data` is a <data.frame>, not a survey design.
+      i This function requires a <survey_taylor> or <survey_nonprob> object.
+      v Convert with `surveycore::as_survey()`.
+
 # create_gen_boot_weights() rejects survey_replicate input
 
     Code
@@ -267,16 +277,6 @@
       Error in `.validate_replicate_input()`:
       x `data` is already a <survey_replicate>.
       i Replicate weights cannot be created from a design that already has replicates.
-
-# create_gen_boot_weights() rejects weighted_df input
-
-    Code
-      create_gen_boot_weights(wdf)
-    Condition
-      Error in `.validate_replicate_input()`:
-      x `data` is a <weighted_df>, not a survey design.
-      i This function requires a <survey_taylor> or <survey_nonprob> object.
-      v Convert with `surveycore::as_survey()`.
 
 # create_gen_boot_weights() rejects unsupported class
 
@@ -342,6 +342,16 @@
       i This function requires a <survey_taylor> or <survey_nonprob> object.
       v Convert with `surveycore::as_survey()`.
 
+---
+
+    Code
+      create_gen_rep_weights(df)
+    Condition
+      Error in `.validate_replicate_input()`:
+      x `data` is a <data.frame>, not a survey design.
+      i This function requires a <survey_taylor> or <survey_nonprob> object.
+      v Convert with `surveycore::as_survey()`.
+
 # create_gen_rep_weights() rejects survey_replicate input
 
     Code
@@ -350,16 +360,6 @@
       Error in `.validate_replicate_input()`:
       x `data` is already a <survey_replicate>.
       i Replicate weights cannot be created from a design that already has replicates.
-
-# create_gen_rep_weights() rejects weighted_df input
-
-    Code
-      create_gen_rep_weights(wdf)
-    Condition
-      Error in `.validate_replicate_input()`:
-      x `data` is a <weighted_df>, not a survey design.
-      i This function requires a <survey_taylor> or <survey_nonprob> object.
-      v Convert with `surveycore::as_survey()`.
 
 # create_gen_rep_weights() rejects unsupported class
 
@@ -400,6 +400,16 @@
       i This function requires a <survey_taylor> or <survey_nonprob> object.
       v Convert with `surveycore::as_survey()`.
 
+---
+
+    Code
+      create_sdr_weights(df)
+    Condition
+      Error in `.validate_replicate_input()`:
+      x `data` is a <data.frame>, not a survey design.
+      i This function requires a <survey_taylor> or <survey_nonprob> object.
+      v Convert with `surveycore::as_survey()`.
+
 # create_sdr_weights() rejects survey_replicate input
 
     Code
@@ -408,16 +418,6 @@
       Error in `.validate_replicate_input()`:
       x `data` is already a <survey_replicate>.
       i Replicate weights cannot be created from a design that already has replicates.
-
-# create_sdr_weights() rejects weighted_df input
-
-    Code
-      create_sdr_weights(wdf)
-    Condition
-      Error in `.validate_replicate_input()`:
-      x `data` is a <weighted_df>, not a survey design.
-      i This function requires a <survey_taylor> or <survey_nonprob> object.
-      v Convert with `surveycore::as_survey()`.
 
 # create_sdr_weights() rejects unsupported class
 
@@ -472,4 +472,173 @@
       x `create_sdr_weights()` requires a probability-design structure.
       i <survey_nonprob> has no PSU or stratum structure required by SDR.
       v Use `create_bootstrap_weights()` for non-probability designs.
+
+# create_sdr_weights() rejects use_normal_hadamard = NA
+
+    Code
+      create_sdr_weights(td, use_normal_hadamard = NA)
+    Condition
+      Error in `create_sdr_weights()`:
+      x `use_normal_hadamard` must be TRUE or FALSE.
+      i Got <logical> of length 1.
+      v Set `use_normal_hadamard = FALSE` (default) or `use_normal_hadamard = TRUE`.
+
+# create_sdr_weights() rejects a length-2 use_normal_hadamard
+
+    Code
+      create_sdr_weights(td, use_normal_hadamard = c(TRUE, TRUE))
+    Condition
+      Error in `create_sdr_weights()`:
+      x `use_normal_hadamard` must be TRUE or FALSE.
+      i Got <logical> of length 2.
+      v Set `use_normal_hadamard = FALSE` (default) or `use_normal_hadamard = TRUE`.
+
+# create_sdr_weights() rejects a character use_normal_hadamard
+
+    Code
+      create_sdr_weights(td, use_normal_hadamard = "TRUE")
+    Condition
+      Error in `create_sdr_weights()`:
+      x `use_normal_hadamard` must be TRUE or FALSE.
+      i Got <character> of length 1.
+      v Set `use_normal_hadamard = FALSE` (default) or `use_normal_hadamard = TRUE`.
+
+# create_sdr_weights() rejects a numeric use_normal_hadamard
+
+    Code
+      create_sdr_weights(td, use_normal_hadamard = 1)
+    Condition
+      Error in `create_sdr_weights()`:
+      x `use_normal_hadamard` must be TRUE or FALSE.
+      i Got <numeric> of length 1.
+      v Set `use_normal_hadamard = FALSE` (default) or `use_normal_hadamard = TRUE`.
+
+# bootstrap overwrite warning message text is unchanged after refactor
+
+    Code
+      withCallingHandlers(surveywts:::.handle_repweights_overwrite(rep, fn_name = "create_bootstrap_weights",
+        warning_class = "surveywts_warning_repweights_overwritten"), warning = function(
+        w) {
+        message(conditionMessage(w))
+        invokeRestart("muffleWarning")
+      })
+    Message
+      ! Overwriting 5 existing replicate weight column(s) in `data`.
+      i A previous call to `create_bootstrap_weights()` already produced 5 replicate column(s). They will be replaced.
+      v Inspect the previous replicates before overwriting if needed.
+    Output
+      <survey_replicate: bootstrap>
+      N = 500 observations
+      Scale: 0.2
+      Replicate scales: vector of length 5, range [1, 1]
+      mse = TRUE
+      
+      Weights:
+        min:    0.27
+        median: 0.98
+        mean:   1.08
+        max:    4.29
+        CV:     0.43
+      
+      Weighting history:
+        #   Step 1 [2025-01-15]: replicate_creation (method = "bootstrap", type = "Rao-Wu-Yue-Beaumont", replicates = 5)
+
+# create_bootstrap_weights() errors on survey_nonprob with no history
+
+    Code
+      create_bootstrap_weights(nps_no_history, type = "quasi-randomization")
+    Condition
+      Error in `.quasi_randomization_bootstrap()`:
+      x No `ipw()` or calibration step found in the weighting history of `data`.
+      i The quasi-randomization bootstrap requires either an `ipw()` step or a calibration step (e.g., `calibrate_rake()`, `poststratify()`) in the weighting history.
+      v Call `ipw()` or a calibration function on the non-probability sample before calling `create_bootstrap_weights()`.
+
+# create_bootstrap_weights() error for bad reference_sample class with calib-only NPS
+
+    Code
+      create_bootstrap_weights(nps_calib_a, type = "quasi-randomization",
+        reference_sample = data.frame(x = 1))
+    Condition
+      Error in `.validate_reference_sample()`:
+      x `reference_sample` must be a <survey_taylor>, not <data.frame>.
+      i Use `survey::svydesign()` to convert an SRS data frame to a <survey_taylor> object.
+      v Pass a <survey_taylor> created with `surveycore::as_survey()`.
+
+# surveywts_error_qr_bootstrap_requires_nonprob message does not say 'IPW history'
+
+    Code
+      create_bootstrap_weights(td, type = "quasi-randomization")
+    Condition
+      Error in `create_bootstrap_weights()`:
+      x `type = 'quasi-randomization'` requires a <survey_nonprob>; got <surveycore::survey_taylor>.
+      i The quasi-randomization bootstrap is designed for non-probability samples.
+      v Use `ipw()` or `calibrate_rake()` to create a <survey_nonprob>, then call `create_bootstrap_weights()`.
+
+# create_bootstrap_weights() errors on calibration-only Level B with no reference
+
+    Code
+      create_bootstrap_weights(nps_calib_b, type = "quasi-randomization")
+    Condition
+      Error in `.quasi_randomization_bootstrap()`:
+      x A reference probability sample is required for `type = 'quasi-randomization'` with Level B calibration.
+      i The calibration history entry has `targets_from_reference = TRUE` but no reference design was found in the entry and `reference_sample` was not supplied.
+      v Supply the reference design via `reference_sample`, or re-run the calibration with a <survey_taylor> reference.
+
+# create_jackknife_weights() rejects data.frame input (new API)
+
+    Code
+      create_jackknife_weights(df, type = "jkn")
+    Condition
+      Error in `.validate_replicate_input()`:
+      x `data` is a <data.frame>, not a survey design.
+      i This function requires a <survey_taylor> or <survey_nonprob> object.
+      v Convert with `surveycore::as_survey()`.
+
+# create_jackknife_weights() rejects list input (new API)
+
+    Code
+      create_jackknife_weights(list(x = 1:5, w = 1), type = "jkn")
+    Condition
+      Error in `.validate_replicate_input()`:
+      x `data` is <list>, which is not a supported input class.
+      i Supported classes: <survey_taylor> and <survey_nonprob>.
+      v Use `surveycore::as_survey()` or `surveycore::survey_nonprob()`.
+
+# create_jackknife_weights() rejects survey_nonprob with type = 'jkn'
+
+    Code
+      create_jackknife_weights(np, type = "jkn")
+    Condition
+      Error in `create_jackknife_weights()`:
+      x <survey_nonprob> input is not supported with `type = "jkn"`.
+      i Only `type = "grouped"` is supported for non-probability designs.
+      v Use `type = "grouped"` with `replicates`, or convert to <survey_taylor>.
+
+# create_jackknife_weights() rejects survey_nonprob with type = 'jk1'
+
+    Code
+      create_jackknife_weights(np, type = "jk1")
+    Condition
+      Error in `create_jackknife_weights()`:
+      x <survey_nonprob> input is not supported with `type = "jk1"`.
+      i Only `type = "grouped"` is supported for non-probability designs.
+      v Use `type = "grouped"` with `replicates`, or convert to <survey_taylor>.
+
+# create_jackknife_weights() errors when type = 'grouped' and replicates = NULL, survey_taylor input
+
+    Code
+      create_jackknife_weights(gss_2024_svy, type = "grouped")
+    Condition
+      Error in `create_jackknife_weights()`:
+      x `replicates` is required when `type = "grouped"`.
+      v Supply an integer, e.g. `replicates = 50L`.
+
+# create_jackknife_weights() errors when type = 'grouped' and replicates = NULL, survey_nonprob input
+
+    Code
+      create_jackknife_weights(nps, type = "grouped")
+    Condition
+      Error in `create_jackknife_weights()`:
+      x `replicates` is required when `type = "grouped"`.
+      v Supply an integer, e.g. `replicates = 50L`.
 

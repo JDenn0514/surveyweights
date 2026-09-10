@@ -8,17 +8,19 @@
 #                                       (moved here from classes.R in PR 4)
 #   .get_weight_col_name()            — returns weight column name as character
 #   .validate_wt_name()              — validates wt_name argument (scalar string)
+#   .validate_reference_design()      — validates reference_design argument (survey_taylor or NULL)
 #   .get_weight_vec()                 — extracts weight vector from any input class
 #   .validate_weights()               — validates weight column (4 errors)
 #   .validate_calibration_variables() — validates calibration/raking variables
 #   .validate_population_marginals()  — validates named-list population targets
 #   .compute_weight_stats()           — computes 11-key weight statistics
 #   .make_history_entry()             — creates one weighting history entry
-#   .make_weighted_df()               — internal weighted_df constructor
 #   .update_survey_weights()          — updates survey object weights + history
-#   .check_input_class()             — validates input class (4 callers)
-#   .get_history()                   — extracts weighting history from any class
-#   .calibrate_engine()               — dispatches to calibration algorithms
+#   .check_input_class()             — validates input class (survey_base only)
+#   .get_history()                   — extracts weighting history from survey_base
+#   .validate_formula()               — validates one-sided formula object
+#   .validate_formula_variables()     — validates formula variables exist in data
+#   .trim_weights_internal()          — clip-and-redistribute primitive for trim_weights()
 #
 # NOTE (GAP #6 departure): .make_history_entry() adds a `step` parameter not
 # in the spec signature. The step number must be computed by the calling
@@ -30,8 +32,7 @@
 # ============================================================================
 
 # Format one history entry as a single display line.
-# Used by print.weighted_df() (classes.R) and the S7 print method
-# for survey_nonprob (methods-print.R). Moved from classes.R in PR 4.
+# Used by the S7 print method for survey_nonprob (methods-print.R).
 .format_history_step <- function(entry) {
   op <- entry$operation
   params <- entry$parameters
@@ -39,13 +40,15 @@
 
   label <- switch(
     op,
+    "calibrate_rake" = ,
     "raking" = {
       vars <- paste(params$variables, collapse = ", ")
-      paste0("raking (margins: ", vars, ")")
+      paste0("raking (targets: ", vars, ")")
     },
-    "calibration" = {
+    "calibrate_linear" = ,
+    "calibrate_logit" = {
       vars <- paste(params$variables, collapse = ", ")
-      paste0("calibration (variables: ", vars, ")")
+      paste0(op, " (variables: ", vars, ")")
     },
     "poststratify" = {
       vars <- paste(params$variables, collapse = ", ")
@@ -65,15 +68,36 @@
     },
     "replicate_creation" = {
       method_str <- entry$method
-      params     <- entry$parameters
-      n_rep      <- params$replicates
+      params <- entry$parameters
+      n_rep <- params$replicates
       type_str <- if (!is.null(params$type)) {
         paste0(", type = \"", params$type, "\"")
       } else {
         ""
       }
       rep_str <- if (!is.null(n_rep)) paste0(", replicates = ", n_rep) else ""
-      paste0("replicate_creation (method = \"", method_str, "\"", type_str, rep_str, ")")
+      paste0(
+        "replicate_creation (method = \"",
+        method_str,
+        "\"",
+        type_str,
+        rep_str,
+        ")"
+      )
+    },
+    "ipw" = {
+      fml_str <- deparse(entry$formula)
+      paste0(
+        "ipw [",
+        fml_str,
+        ", ",
+        entry$method,
+        ", n_ref=",
+        entry$n_reference,
+        ", N_hat=",
+        round(entry$estimated_population_size),
+        "]"
+      )
     },
     op # default: just the operation name
   )
@@ -87,11 +111,9 @@
 # ============================================================================
 
 # Returns the name of the weight column as a character(1).
-# For a plain data.frame with weights_quo = NULL, returns ".weight" —
-# this is the authoritative default per spec §II.d.
 #
 # Arguments:
-#   x           : data.frame, weighted_df, survey_taylor, or survey_nonprob
+#   x           : survey_taylor, survey_nonprob, or survey_replicate
 #   weights_quo : quosure from rlang::enquo(weights) in the calling function
 #
 # Returns: character(1)
@@ -100,17 +122,13 @@
     return(rlang::as_name(weights_quo))
   }
 
-  if (inherits(x, "weighted_df")) {
-    return(attr(x, "weight_col"))
-  }
-
-  if (S7::S7_inherits(x, surveycore::survey_taylor) ||
-      S7::S7_inherits(x, surveycore::survey_nonprob)) {
+  if (S7::S7_inherits(x, surveycore::survey_base)) {
     return(x@variables$weights)
   }
-
-  # Plain data.frame with no weights argument: default column name
+  # nocov start
+  # Unreachable via public API: callers validate survey_base class first.
   ".weight"
+  # nocov end
 }
 
 # ============================================================================
@@ -124,6 +142,9 @@
 #
 # Returns: invisible(TRUE) on success (errors otherwise).
 .validate_wt_name <- function(wt_name) {
+  if (is.null(wt_name)) {
+    return(invisible(TRUE))
+  }
   if (!is.character(wt_name) || length(wt_name) != 1) {
     cli::cli_abort(
       c(
@@ -145,41 +166,53 @@
 }
 
 # ============================================================================
+# .validate_reference_design()
+# ============================================================================
+
+# Validates the reference_design argument: must be a survey_taylor or NULL.
+# Used by rake() and calibrate() (two call sites → lives in utils.R).
+#
+# Arguments:
+#   reference_design : object to validate
+#
+# Returns: invisible(NULL) on success (errors otherwise).
+.validate_reference_design <- function(reference_design) {
+  if (
+    !is.null(reference_design) &&
+      !S7::S7_inherits(reference_design, surveycore::survey_taylor)
+  ) {
+    cli::cli_abort(
+      c(
+        "x" = "{.arg reference_design} must be a {.cls survey_taylor}.",
+        "i" = "Got class {.cls {class(reference_design)[[1L]]}}.",
+        "v" = "Pass the {.cls survey_taylor} object used to compute the targets."
+      ),
+      class = "surveywts_error_reference_design_not_taylor"
+    )
+  }
+  invisible(NULL)
+}
+
+# ============================================================================
 # .get_weight_vec()
 # ============================================================================
 
 # Extracts the weight vector from any supported input class.
-# For a plain data.frame with weights_quo = NULL, returns uniform weights
-# (1 / nrow(x)) — these are the starting weights before calibration.
 #
 # Arguments:
-#   x           : data.frame, weighted_df, survey_taylor, or survey_nonprob
+#   x           : survey_taylor, survey_nonprob, or survey_replicate
 #   weights_quo : quosure from rlang::enquo(weights) in the calling function
 #
-# Returns: numeric vector (length nrow(data))
+# Returns: numeric vector (length nrow(x@data))
 .get_weight_vec <- function(x, weights_quo) {
-  data_df <- if (inherits(x, "data.frame")) {
-    x
-  } else {
-    x@data
-  }
+  data_df <- x@data
 
   if (!rlang::quo_is_null(weights_quo)) {
     col_name <- rlang::as_name(weights_quo)
     return(data_df[[col_name]])
   }
 
-  if (inherits(x, "weighted_df")) {
-    return(data_df[[attr(x, "weight_col")]])
-  }
-
-  if (S7::S7_inherits(x, surveycore::survey_taylor) ||
-      S7::S7_inherits(x, surveycore::survey_nonprob)) {
-    return(data_df[[x@variables$weights]])
-  }
-
-  # Plain data.frame with no weights: uniform starting weights
-  rep(1 / nrow(data_df), nrow(data_df))
+  data_df[[x@variables$weights]]
 }
 
 # ============================================================================
@@ -296,7 +329,11 @@
 
     n_na <- sum(is.na(col))
     if (n_na > 0L) {
-      fn_name <- if (context == "Calibration") "calibrate" else "rake"
+      fn_name <- if (context == "Calibration") {
+        "calibrate_linear"
+      } else {
+        "calibrate_rake"
+      }
       cli::cli_abort(
         c(
           "x" = paste0(
@@ -354,7 +391,12 @@
     # Extract targets as a named numeric vector
     elem <- population[[var]]
     if (is.data.frame(elem)) {
-      targets <- stats::setNames(as.numeric(elem$target), as.character(elem$level)) # nocov
+      # nocov start
+      targets <- stats::setNames(
+        as.numeric(elem$target),
+        as.character(elem$level)
+      )
+      # nocov end
     } else {
       targets <- elem
     }
@@ -525,7 +567,8 @@
   parameters,
   before_stats,
   after_stats,
-  convergence = NULL
+  convergence = NULL,
+  capping = NULL
 ) {
   list(
     step = as.integer(step),
@@ -539,41 +582,8 @@
       after = after_stats
     ),
     convergence = convergence,
+    capping = capping,
     package_version = as.character(utils::packageVersion("surveywts"))
-  )
-}
-
-# ============================================================================
-# .make_weighted_df()
-# ============================================================================
-
-# Internal constructor for weighted_df. Sets class vector and attributes.
-# Errors if weight_col is not a column name in data.
-#
-# Arguments:
-#   data       : data.frame (must already contain weight_col)
-#   weight_col : character(1) — name of the weight column
-#   history    : list of history entries to attach (default: empty list)
-#
-# Returns: weighted_df
-.make_weighted_df <- function(data, weight_col, history = list()) {
-  # nocov start
-  if (!weight_col %in% names(data)) {
-    cli::cli_abort(
-      c(
-        "x" = "Internal error: weight column {.field {weight_col}} not in data.",
-        "i" = "This is a bug in surveywts. Please report it."
-      ),
-      class = "surveywts_error_internal"
-    )
-  }
-  # nocov end
-
-  structure(
-    tibble::as_tibble(data),
-    class = c("weighted_df", "tbl_df", "tbl", "data.frame"),
-    weight_col = weight_col,
-    weighting_history = history
   )
 }
 
@@ -583,28 +593,69 @@
 
 # Updates a survey object's weight column and appends a history entry to
 # @metadata@weighting_history. Returns a new survey object of the SAME class
-# as the input (no class promotion). Used by calibrate(), rake(),
-# poststratify(), and adjust_nonresponse().
+# as the input. Used by calibrate_rake(), calibrate_linear(), calibrate_logit(),
+# poststratify(), calibrate(), adjust_nonresponse(), redistribute_weights(),
+# trim_weights(), and rescale_weights().
 #
 # Arguments:
-#   design          : survey_taylor or survey_nonprob
-#   new_weights_vec : numeric vector (length = nrow(design@data))
+#   design          : survey_taylor, survey_nonprob, or survey_replicate
+#   new_weights_vec : numeric vector (length = nrow(design@data)); the
+#                     full-sample weight column is updated. Replicate weight
+#                     columns are written directly by the caller before this call.
 #   history_entry   : list from .make_history_entry()
+#   wt_name         : NULL (default) or character(1). NULL → overwrite the
+#                     existing weight column in-place; non-NULL → write to a new
+#                     column named wt_name and update @variables$weights.
+#   caldata         : named list or NULL. When non-NULL, a fully constructed
+#                     @calibration list. Written to design@calibration before
+#                     returning. NULL (default) leaves @calibration unchanged.
 #
 # Returns: survey object of the same class as input
-.update_survey_weights <- function(design, new_weights_vec, history_entry) {
-  weight_col <- design@variables$weights
-
-  # Update data
+.update_survey_weights <- function(
+  design,
+  new_weights_vec,
+  history_entry,
+  wt_name = NULL,
+  caldata = NULL
+) {
   updated_data <- design@data
-  updated_data[[weight_col]] <- new_weights_vec
-  design@data <- updated_data
+
+  if (is.null(wt_name)) {
+    # Overwrite existing weight column in-place
+    weight_col <- design@variables$weights
+    updated_data[[weight_col]] <- new_weights_vec
+    design@data <- updated_data
+  } else {
+    # Check for conflict: wt_name already exists as a non-weight column
+    if (
+      wt_name %in% names(design@data) && wt_name != design@variables$weights
+    ) {
+      cli::cli_abort(
+        c(
+          "x" = "{.arg wt_name} {.field {wt_name}} already exists as a non-weight column in {.arg data}.",
+          "i" = "To avoid overwriting data, choose a new output column name.",
+          "v" = "Specify a {.arg wt_name} that does not conflict with existing columns."
+        ),
+        class = "surveywts_error_wt_name_conflict"
+      )
+    }
+    # Write data first (so the new column exists before @variables is updated),
+    # then update @variables$weights — S7 validator fires on the latter assignment.
+    updated_data[[wt_name]] <- new_weights_vec
+    design@data <- updated_data
+    design@variables$weights <- wt_name
+  }
 
   # Append history entry (must go through intermediate variable for S7 nested
   # property assignment)
   meta <- design@metadata
   meta@weighting_history <- c(meta@weighting_history, list(history_entry))
   design@metadata <- meta
+
+  # Populate @calibration if provided
+  if (!is.null(caldata)) {
+    design@calibration <- caldata
+  }
 
   design
 }
@@ -614,563 +665,154 @@
 # .check_input_class()
 # ============================================================================
 
-# Validates that `data` is a supported input class for calibration/weighting
-# functions. Used by calibrate(), rake(), poststratify(), and
-# adjust_nonresponse().
+# Validates that `data` is a survey_base object (survey_nonprob, survey_taylor,
+# or survey_replicate). Used by all calibration, nonresponse, utility, and
+# diagnostic functions. Throws surveywts_error_not_survey_base otherwise.
 #
 # Arguments:
-#   data : object passed as the `data` argument to a calibration function
+#   data : object passed as the `data` argument to a weighting function
 #
-# Returns: invisible(TRUE) on success. Throws on unsupported class.
+# Returns: invisible(TRUE) on success. Throws on non-survey_base input.
 .check_input_class <- function(data) {
-  if (S7::S7_inherits(data, surveycore::survey_replicate)) {
-    cli::cli_abort(
-      c(
-        "x" = "{.cls survey_replicate} objects are not yet supported.",
-        "i" = "Replicate-weight support requires the Replicate release.",
-        "v" = "Use a {.cls survey_taylor} design, or wait for the Replicate release."
-      ),
-      class = "surveywts_error_replicate_not_supported"
-    )
-  }
-
-  is_supported <- inherits(data, "data.frame") ||
-    S7::S7_inherits(data, surveycore::survey_base)
-
-  if (!is_supported) {
+  if (!S7::S7_inherits(data, surveycore::survey_base)) {
     cls <- class(data)[[1L]]
     cli::cli_abort(
       c(
-        "x" = "{.arg data} must be a data frame or a supported survey design object.",
+        "x" = "{.arg data} must be a {.cls survey_nonprob}, {.cls survey_taylor}, or {.cls survey_replicate}.",
         "i" = "Got {.cls {cls}}.",
-        "v" = "See package documentation for supported input types."
+        "v" = "Use {.fn surveycore::as_survey_nonprob}, {.fn surveycore::as_survey}, or {.fn surveycore::as_survey_replicate} to construct a survey object."
       ),
-      class = "surveywts_error_unsupported_class"
+      class = "surveywts_error_not_survey_base"
     )
   }
+  invisible(TRUE)
 }
 
 # ============================================================================
 # .get_history()
 # ============================================================================
 
-# Extracts weighting history from any supported input class.
+# Extracts weighting history from a survey_base object.
 # Used by calibrate(), rake(), poststratify(), and adjust_nonresponse().
 #
 # Arguments:
-#   x : data.frame, weighted_df, survey_taylor, or survey_nonprob
+#   x : survey_taylor, survey_nonprob, or survey_replicate
 #
 # Returns: list (possibly empty) of history entries.
 .get_history <- function(x) {
-  if (inherits(x, "weighted_df")) {
-    wh <- attr(x, "weighting_history")
-    if (is.null(wh)) list() else wh # nocov
-  } else if (S7::S7_inherits(x, surveycore::survey_base)) {
-    wh <- x@metadata@weighting_history
-    if (is.null(wh)) list() else wh # nocov
+  if (S7::S7_inherits(x, surveycore::survey_base)) {
+    x@metadata@weighting_history
   } else {
+    # nocov start
+    # Unreachable via public API: all callers validate survey_base class first.
     list()
-  }
+  } # nocov end
 }
 
+
 # ============================================================================
-# .calibrate_engine()
+# .validate_formula()
 # ============================================================================
 
-# The shared computation engine used by calibrate(), rake(), and
-# poststratify(). Takes only plain data (no S7/S3 dispatch). Returns a
-# named list with the calibrated weight vector and convergence information.
+# Validates that formula is a one-sided formula object (~ RHS).
+# A two-sided formula (LHS ~ RHS) is rejected because calibration and
+# nonresponse functions construct the LHS internally.
 #
 # Arguments:
-#   data_df          : plain data.frame
-#   weights_vec      : numeric vector (length = nrow(data_df)),
-#                      all positive, no NAs
-#   calibration_spec : list describing the calibration problem (see below)
-#   method           : character(1) — "linear", "logit", "ipf", "anesrake",
-#                      or "poststratify"
-#   control          : list with at least $maxit; method-appropriate defaults
-#                      already applied by the calling function
+#   formula : object to validate
 #
-# calibration_spec format:
-#   list(
-#     type      = <method string — same as method argument>,
-#     variables = list(  # for "linear"/"logit"/"ipf"/"anesrake"
-#       list(col = "age_group", targets = c("18-34" = 420, ...)),  # counts
-#       ...
-#     ),
-#     cells     = list(  # for "poststratify" only
-#       list(indices = <integer vector>, target = <count>),
-#       ...
-#     ),
-#     total_n   = <sum of starting weights; for reference>
-#   )
-#
-# Targets in calibration_spec must be in COUNT form (not proportions).
-# The calling function converts prop→count via prop * sum(weights_vec).
-#
-# Returns: list(
-#   weights     = <numeric vector of calibrated weights>,
-#   convergence = list(
-#     converged  = <logical>,
-#     iterations = <integer>,
-#     max_error  = <numeric>,
-#     tolerance  = <numeric>
-#   )
-# )
-# For "poststratify", convergence = NULL (non-iterative).
-#
-# Throws surveywts_error_calibration_not_converged on failure.
-#
-# NOTE (GAP #6): calibration_spec format may be refined during implementation
-# of PRs 5–7. Document departures here.
-.calibrate_engine <- function(data_df, weights_vec, calibration_spec, method, control) {
-  # Handle maxit = 0: algorithm never runs
-  if (isTRUE(control$maxit == 0L) || isTRUE(control$maxit == 0)) {
-    .throw_not_converged_zero_maxit(method, control)
-  }
-
-  type <- calibration_spec$type
-  vars_spec <- calibration_spec$variables
-
-  # ---- Linear or logit calibration (via survey::calibrate()) ---------------
-  if (type %in% c("linear", "logit")) {
-    var_names <- vapply(vars_spec, function(v) v$col, character(1))
-
-    # Use R default treatment contrasts (k-1 dummies per factor + intercept).
-    # This is mathematically equivalent to full indicator encoding without
-    # intercept, and is the natural interface for survey::calibrate().
-    for (v in vars_spec) {
-      col_name <- v$col
-      lvls <- names(v$targets)
-      data_df[[col_name]] <- factor(data_df[[col_name]], levels = lvls)
-    }
-
-    # Check if all variables have only 1 level — trivially calibrated
-    all_single <- all(vapply(
-      vars_spec, function(v) length(v$targets) == 1L, logical(1)
-    ))
-    if (all_single) {
-      return(list(
-        weights = weights_vec,
-        convergence = list(
-          converged = TRUE,
-          iterations = 1L,
-          max_error = 0,
-          tolerance = control$epsilon
-        )
-      ))
-    }
-
-    # Build formula with intercept: ~var1 + var2
-    # Only include variables with 2+ levels (single-level factors cannot
-    # generate dummy columns and are handled by the intercept constraint).
-    fml_vars <- var_names[vapply(
-      vars_spec, function(v) length(v$targets) >= 2L, logical(1)
-    )]
-    fml <- stats::as.formula(
-      paste("~", paste(fml_vars, collapse = " + "))
-    )
-
-    # Build named population totals vector matching model.matrix() column names
-    mm <- stats::model.matrix(fml, data = data_df)
-    total_w <- sum(weights_vec)
-
-    # Construct population totals: intercept = population total (sum of any
-    # variable's targets — they should all sum to the same total for marginal
-    # calibration), then for each variable's non-reference levels, the target.
-    pop_total <- sum(vars_spec[[1]]$targets)
-
-    pop_totals <- stats::setNames(numeric(ncol(mm)), colnames(mm))
-    pop_totals["(Intercept)"] <- pop_total
-
-    for (v in vars_spec) {
-      if (length(v$targets) < 2L) next
-      col_name <- v$col
-      lvls <- names(v$targets)
-      # Reference level is first; columns in model.matrix start from 2nd level
-      for (lev in lvls[-1L]) {
-        col_nm <- paste0(col_name, lev)
-        if (col_nm %in% names(pop_totals)) {
-          pop_totals[col_nm] <- v$targets[[lev]]
-        }
-      }
-    }
-
-    # Add temporary weight column
-    data_df$.wt_tmp <- weights_vec
-    svy_tmp <- survey::svydesign(ids = ~1, weights = ~.wt_tmp, data = data_df)
-
-    calfun <- if (type == "linear") survey::cal.linear else survey::cal.logit
-
-    if (type == "linear") {
-      # Linear: closed-form, no convergence check needed
-      cal_result <- survey::calibrate(
-        svy_tmp,
-        formula = fml,
-        population = pop_totals,
-        calfun = calfun,
-        maxit = control$maxit,
-        epsilon = control$epsilon
-      )
-      new_weights <- as.numeric(stats::weights(cal_result))
-
-      return(list(
-        weights = new_weights,
-        convergence = list(
-          converged = TRUE,
-          iterations = 1L,
-          max_error = 0,
-          tolerance = control$epsilon
-        )
-      ))
-    } else {
-      # Logit: intercept non-convergence warning and re-throw as typed error
-      # cal.logit requires finite bounds; use wide bounds matching vendored
-      # behavior (lower ≈ 0, upper ≈ Inf)
-      cal_result <- tryCatch(
-        withCallingHandlers(
-          survey::calibrate(
-            svy_tmp,
-            formula = fml,
-            population = pop_totals,
-            calfun = calfun,
-            bounds = c(1e-6, 1e6),
-            maxit = control$maxit,
-            epsilon = control$epsilon
-          ),
-          warning = function(w) {
-            msg <- conditionMessage(w)
-            if (grepl("converge", msg, ignore.case = TRUE)) {
-              cli::cli_abort(
-                c(
-                  "x" = paste0(
-                    "Calibration did not converge after ",
-                    "{control$maxit} iterations."
-                  ),
-                  "i" = "survey::calibrate() reported: {msg}",
-                  "v" = paste0(
-                    "Increase {.code control$maxit}, relax ",
-                    "{.code control$epsilon}, or verify population totals ",
-                    "are consistent with the sample."
-                  )
-                ),
-                class = "surveywts_error_calibration_not_converged"
-              )
-            }
-            # Muffle benign rescaling warnings from grake()
-            if (grepl("rescaling", msg, ignore.case = TRUE)) {
-              tryInvokeRestart("muffleWarning")
-            }
-          }
-        ),
-        error = function(e) {
-          if (inherits(e, "surveywts_error_calibration_not_converged")) {
-            stop(e)
-          }
-          # Re-throw unexpected errors
-          stop(e) # nocov
-        }
-      )
-
-      new_weights <- as.numeric(stats::weights(cal_result))
-
-      return(list(
-        weights = new_weights,
-        convergence = list(
-          converged = TRUE,
-          iterations = NA_integer_,
-          max_error = 0,
-          tolerance = control$epsilon
-        )
-      ))
-    }
-  }
-
-  # ---- IPF (via survey::rake()) -------------------------------------------
-  if (type == "ipf") {
-    var_names <- vapply(vars_spec, function(v) v$col, character(1))
-
-    # Build margin formulas and population data frames
-    sample_margins <- lapply(var_names, function(v) {
-      stats::as.formula(paste("~", v))
-    })
-
-    population_margins <- lapply(vars_spec, function(v) {
-      pop_df <- data.frame(
-        level = names(v$targets),
-        Freq = as.numeric(v$targets),
-        stringsAsFactors = FALSE
-      )
-      names(pop_df)[1] <- v$col
-      pop_df
-    })
-
-    # Add temporary weight column
-    data_df$.wt_tmp <- weights_vec
-    svy_tmp <- survey::svydesign(ids = ~1, weights = ~.wt_tmp, data = data_df)
-
-    raked <- tryCatch(
-      withCallingHandlers(
-        survey::rake(
-          svy_tmp,
-          sample.margins = sample_margins,
-          population.margins = population_margins,
-          control = list(
-            maxit = as.integer(control$maxit),
-            epsilon = control$epsilon
-          )
-        ),
-        warning = function(w) {
-          msg <- conditionMessage(w)
-          if (grepl("converge", msg, ignore.case = TRUE)) {
-            cli::cli_abort(
-              c(
-                "x" = paste0(
-                  "Raking did not converge after ",
-                  "{control$maxit} full sweeps."
-                ),
-                "i" = "survey::rake() reported: {msg}",
-                "v" = paste0(
-                  "Increase {.code control$maxit}, relax ",
-                  "{.code control$epsilon}, or verify margin totals ",
-                  "are consistent with the sample."
-                )
-              ),
-              class = "surveywts_error_calibration_not_converged"
-            )
-          }
-        }
+# Returns: invisible(TRUE) on success (errors otherwise).
+.validate_formula <- function(formula) {
+  if (!inherits(formula, "formula") || length(formula) != 2L) {
+    cli::cli_abort(
+      c(
+        "x" = "{.arg formula} must be a one-sided formula (e.g., {.code ~ age + sex}).",
+        "i" = "Got {.cls {class(formula)[[1]]}}."
       ),
-      error = function(e) {
-        if (inherits(e, "surveywts_error_calibration_not_converged")) {
-          stop(e)
-        }
-        stop(e) # nocov
-      }
+      class = "surveywts_error_formula_invalid"
     )
-
-    new_weights <- as.numeric(stats::weights(raked))
-
-    return(list(
-      weights = new_weights,
-      convergence = list(
-        converged = TRUE,
-        iterations = NA_integer_,
-        max_error = 0,
-        tolerance = control$epsilon
-      )
-    ))
   }
+  invisible(TRUE)
+}
 
-  # ---- Anesrake (via anesrake::anesrake()) ---------------------------------
-  if (type == "anesrake") {
-    var_names <- vapply(vars_spec, function(v) v$col, character(1))
+# ============================================================================
+# .validate_formula_variables()
+# ============================================================================
 
-    # Build named list of target vectors (proportions for anesrake)
-    targets_list <- lapply(vars_spec, function(v) {
-      tgt <- v$targets
-      tgt / sum(tgt)  # anesrake expects proportions
-    })
-    names(targets_list) <- var_names
-
-    # Ensure data columns are factors with correct levels
-    for (v in vars_spec) {
-      lvls <- names(v$targets)
-      data_df[[v$col]] <- factor(data_df[[v$col]], levels = lvls)
-    }
-
-    # Create synthetic caseid
-    data_df$.anesrake_id <- seq_len(nrow(data_df))
-
-    # anesrake::anesrake() default cap is 5; NULL is not accepted
-    anesrake_cap <- calibration_spec$cap %||% 5
-
-    # anesrake uses print() for status messages; suppress the console output.
-    # When data is already calibrated, anesrake::selecthighestpcts() throws
-    # an error "No variables are off by more than ...". Catch that and treat
-    # as already-calibrated.
-    anesrake_error <- NULL
-    utils::capture.output(
-      result <- tryCatch(
-        suppressWarnings(
-          anesrake::anesrake(
-            inputter     = targets_list,
-            dataframe    = data_df,
-            caseid       = data_df$.anesrake_id,
-            weightvec    = weights_vec,
-            choosemethod = control$variable_select,
-            cap          = anesrake_cap,
-            pctlim       = control$improvement,
-            nlim         = as.integer(control$min_cell_n),
-            iterate      = TRUE,
-            maxit        = as.integer(control$maxit),
-            type         = "pctlim",
-            force1       = FALSE
-          )
-        ),
-        error = function(e) {
-          if (grepl("No variables are off", conditionMessage(e),
-                    ignore.case = TRUE)) {
-            anesrake_error <<- "already_calibrated"
-            NULL
-          } else {
-            stop(e) # nocov
-          }
-        }
-      )
-    )
-
-    # Already-calibrated: anesrake threw an error because no variables
-    # exceeded the improvement threshold
-    if (identical(anesrake_error, "already_calibrated")) {
-      cli::cli_inform(
-        c("i" = paste0(
-          "Raking converged in 1 sweep: all variables already met their ",
-          "margins. Weights were not adjusted."
-        )),
-        class = "surveywts_message_already_calibrated"
-      )
-      return(list(
-        weights = weights_vec,
-        convergence = list(
-          converged  = TRUE,
-          iterations = 1L,
-          max_error  = 0,
-          tolerance  = control$improvement
-        )
-      ))
-    }
-
-    # anesrake::anesrake()$converge is a character string:
-    #   "Complete convergence was achieved" — fully converged
-    #   "Results are stable, but do not perfectly match..." — partial,
-    #     treated as converged (matches old vendored behaviour)
-    #   Other strings (e.g. containing "Did Not Converge") — failure
-    converged <- grepl(
-      "Complete convergence|Results are stable",
-      result$converge, ignore.case = TRUE
-    )
-
-    if (!converged) {
+# Validates that all variables in formula exist in data.
+# Errors on the first missing variable found.
+#
+# Arguments:
+#   formula      : a validated one-sided formula (call .validate_formula() first)
+#   data         : data.frame to check against
+#   design_label : character(1) — name shown in error messages (e.g., "primary_design")
+#   error_class  : character(1) or NULL — when NULL, uses
+#                  "surveywts_error_formula_variable_not_found" (existing behavior);
+#                  when non-NULL, uses the supplied class instead (e.g., for
+#                  reporting that the variable is missing from the reference design)
+#
+# Returns: invisible(TRUE) on success (errors otherwise).
+.validate_formula_variables <- function(
+  formula,
+  data,
+  design_label,
+  error_class = NULL
+) {
+  cls <- if (is.null(error_class)) {
+    "surveywts_error_formula_variable_not_found"
+  } else {
+    error_class
+  }
+  vars <- all.vars(formula)
+  for (var in vars) {
+    if (!var %in% names(data)) {
       cli::cli_abort(
         c(
-          "x" = paste0(
-            "Raking did not converge after ",
-            "{control$maxit} full sweeps."
-          ),
-          "i" = paste0(
-            "anesrake::anesrake() reported: {result$converge}"
-          ),
-          "v" = paste0(
-            "Increase {.code control$maxit} or relax ",
-            "{.code control$improvement} in the {.arg control} list."
-          )
+          "x" = "Variable {.field {var}} not found in {.arg {design_label}}.",
+          "i" = "All variables in {.arg formula} must be columns in {.arg {design_label}}.",
+          "v" = "Check spelling or add {.field {var}} to the data before calling this function."
         ),
-        class = "surveywts_error_calibration_not_converged"
+        class = cls
       )
     }
-
-    # nocov start
-    # Defensive: anesrake returns iterations = 0 only when it throws "No
-    # variables are off", which is caught above and returns early. This branch
-    # cannot be reached via the public API.
-    if (result$iterations == 0L) {
-      cli::cli_inform(
-        c("i" = paste0(
-          "Raking converged in 1 sweep: all variables already met their ",
-          "margins. Weights were not adjusted."
-        )),
-        class = "surveywts_message_already_calibrated"
-      )
-    }
-    # nocov end
-
-    new_weights <- as.numeric(result$weightvec)
-
-    return(list(
-      weights = new_weights,
-      convergence = list(
-        converged  = converged,
-        iterations = as.integer(result$iterations),
-        max_error  = 0,
-        tolerance  = control$improvement
-      )
-    ))
   }
-
-  # ---- Post-stratification (via survey::postStratify()) --------------------
-  if (type == "poststratify") {
-    strata_names <- calibration_spec$strata_names
-    pop_input <- calibration_spec$population
-
-    # Build formula from strata_names
-    ps_fml <- stats::as.formula(
-      paste("~", paste(strata_names, collapse = " + "))
-    )
-
-    # Build population data frame: rename "target" -> "Freq"
-    pop_df <- pop_input
-    names(pop_df)[names(pop_df) == "target"] <- "Freq"
-
-    # Add temporary weight column
-    data_df$.wt_tmp <- weights_vec
-    svy_tmp <- survey::svydesign(ids = ~1, weights = ~.wt_tmp, data = data_df)
-
-    ps_result <- survey::postStratify(
-      svy_tmp,
-      strata = ps_fml,
-      population = pop_df
-    )
-    new_weights <- as.numeric(stats::weights(ps_result))
-
-    # Poststratification is non-iterative: convergence = NULL per spec §IV.5
-    return(list(
-      weights = new_weights,
-      convergence = NULL
-    ))
-  }
-
-  # nocov start
-  cli::cli_abort(
-    c(
-      "x" = "Internal error: unknown calibration type {.val {type}}.",
-      "i" = "This is a bug in surveywts. Please report it."
-    ),
-    class = "surveywts_error_internal"
-  )
-  # nocov end
+  invisible(TRUE)
 }
 
-# ---- Internal helpers for .calibrate_engine() ----------------------------
+# ============================================================================
+# .trim_weights_internal()
+# ============================================================================
 
-# Throw surveywts_error_calibration_not_converged for the maxit = 0 case.
-# context: the calibration method (linear, logit, ipf, anesrake, poststratify)
-.throw_not_converged_zero_maxit <- function(method, control) {
-  if (method %in% c("linear", "logit")) {
-    cli::cli_abort(
+# Clip-and-redistribute logic adapted from survey::do_trimWeights (Thomas Lumley, GPL-2/3).
+# Source: https://github.com/cran/survey/blob/4834b8bc91f6414ad4514552daaed8990a86d9c1/R/grake.R#L449
+.trim_weights_internal <- function(weights, lower, upper, has_trimmed) {
+  outside <- weights < lower | weights > upper
+  if (!any(outside)) {
+    return(list(weights = weights, has_trimmed = has_trimmed))
+  }
+  weights_new <- pmax(lower, pmin(weights, upper))
+  trimmings <- weights - weights_new
+  can_adjust <- !outside & !has_trimmed
+  if (!any(can_adjust)) {
+    cli::cli_warn(
       c(
-        "x" = paste0(
-          "Calibration did not converge after 0 iterations."
-        ),
-        "i" = "Setting {.code control$maxit = 0} means no calibration is attempted.",
-        "v" = paste0(
-          "Set {.code control$maxit} to a positive integer ",
-          "(default: 50)."
-        )
+        "!" = "Weight redistribution failed: no untrimmed units remain to absorb the trimmed excess."
       ),
-      class = "surveywts_error_calibration_not_converged"
+      class = "surveywts_warning_trimming_failed"
     )
   } else {
-    cli::cli_abort(
-      c(
-        "x" = "Raking did not converge after 0 iterations.",
-        "i" = "Setting {.code control$maxit = 0} means no raking is attempted.",
-        "v" = paste0(
-          "Set {.code control$maxit} to a positive integer."
-        )
-      ),
-      class = "surveywts_error_calibration_not_converged"
-    )
+    weights_new[can_adjust] <- weights_new[can_adjust] +
+      sum(trimmings) / sum(can_adjust)
   }
+  list(weights = weights_new, has_trimmed = outside | has_trimmed)
 }
 
+# ============================================================================
+# .has_package()
+# ============================================================================
+
+# Thin wrapper around requireNamespace() so tests can mock package availability
+# without needing to mock a base function.
+.has_package <- function(pkg) {
+  requireNamespace(pkg, quietly = TRUE)
+}

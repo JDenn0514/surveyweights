@@ -1,247 +1,217 @@
 # R/calibrate.R
 #
-# calibrate() — general calibration to known marginal population totals.
+# calibrate() — thin dispatcher routing to calibrate_rake(), calibrate_linear(),
+# or calibrate_logit() based on the `method` argument.
 #
-# Supports:
-#   - method = "linear"  (GREG, one-step exact)
-#   - method = "logit"   (bounded, iterative via IRLS)
-#   - type = "prop"      (population proportions; default)
-#   - type = "count"     (population counts)
+# PR 4 changes:
+#   - Default method changed from "greg" to "rake"
+#   - Removed "greg" and "poststrat" method options
+#   - Added "linear" and "logit" method options
+#   - Dispatches to calibrate_rake(), calibrate_linear(), calibrate_logit()
 #
-# All shared helpers (.get_weight_vec, .validate_weights,
-# .check_input_class, .get_history, etc.) live in R/utils.R.
+# This function adds no validation or calibration logic of its own.
+# All errors propagate from the dispatched function.
+#
+# All substantive functions live in:
+#   R/calibrate_rake.R    — raking (iterative proportional fitting or NR)
+#   R/calibrate_linear.R  — GREG / linear calibration
+#   R/calibrate_logit.R   — logit-bounded calibration
 
-#' Calibrate survey weights to known population totals
+#' Adjust weights to match population totals
 #'
-#' Adjusts survey weights so that the weighted marginal totals match known
-#' population values. Supports linear (GREG) and logit calibration methods
-#' for categorical auxiliary variables.
+#' A thin dispatcher that routes to [calibrate_rake()], [calibrate_linear()],
+#' or [calibrate_logit()] based on `method`. All arguments are forwarded
+#' unchanged; all validation and error handling occur in the dispatched
+#' function.
 #'
-#' @param data A `data.frame`, `weighted_df`, `survey_taylor`, or
-#'   `survey_nonprob`. `survey_replicate` -> error. Any other class -> error.
-#' @param variables <[`tidy-select`][tidyselect::language]> Columns to
-#'   calibrate on. Must be categorical (character or factor). Specify as a
-#'   bare name or `c(var1, var2, ...)`.
-#' @param population Named list of population targets. Names must match the
-#'   column names selected by `variables`. Each element: a named numeric
-#'   vector `c(level = target, ...)`.
+#' @param data A `survey_nonprob`, `survey_taylor`, or `survey_replicate`.
+#'   Forwarded unchanged to the dispatched function. For `survey_replicate`
+#'   inputs, calibration is applied to every replicate weight column using the
+#'   same `targets`; see the dispatched function for replicate weight handling
+#'   details.
+#' @param targets Target specification. Forwarded to the dispatched function.
+#'   Two formats are accepted:
 #'
-#'   For `type = "prop"`: values must sum to 1.0 (within `1e-6` tolerance).
-#'   For `type = "count"`: values must be strictly positive.
-#' @param weights <[`tidy-select`][tidyselect::language]> Weight column name
-#'   (bare name). `NULL` -> auto-detected from `weighted_df` attribute or
-#'   survey object `@variables$weights`. For plain `data.frame` with
-#'   `weights = NULL`, uniform starting weights are used and the output
-#'   column is named by `wt_name` (default `"wts"`).
-#' @param wt_name Character scalar. Name of the output weight column in the
-#'   returned `weighted_df`. Default `"wts"`. Ignored when `data` is a survey
-#'   object (`survey_taylor` or `survey_nonprob`).
-#' @param method Character scalar. `"linear"` (default): one-step exact
-#'   GREG calibration (may produce negative weights). `"logit"`: bounded
-#'   iterative calibration (always positive).
-#' @param type Character scalar. `"prop"` (default): `population` values
-#'   are proportions. `"count"`: `population` values are counts.
-#' @param control Named list of convergence parameters. Merged with defaults
-#'   `list(maxit = 50, epsilon = 1e-7)`. Omitted keys retain their defaults.
+#'   **Format A — named list** (one element per calibration variable):
+#'   ```r
+#'   list(
+#'     sex   = c("Male" = 0.49, "Female" = 0.51),
+#'     age_f3 = c("18-34" = 0.30, "35-54" = 0.33, "55+" = 0.37)
+#'   )
+#'   ```
 #'
-#' @return
-#'   - `data.frame` or `weighted_df` input -> `weighted_df`
-#'   - `survey_taylor` or `survey_nonprob` input -> same class as input
-#'     (`survey_taylor` or `survey_nonprob`; class is preserved)
+#'   **Format B — long data frame** with columns `variable`, `level`, `target`:
+#'   ```r
+#'   data.frame(
+#'     variable = c("sex", "sex", "age_f3", "age_f3", "age_f3"),
+#'     level    = c("Male", "Female", "18-34", "35-54", "55+"),
+#'     target   = c(0.49, 0.51, 0.30, 0.33, 0.37)
+#'   )
+#'   ```
 #'
-#'   The weight column in the output contains calibrated weights. A history
-#'   entry with `operation = "calibration"` is appended to
-#'   `weighting_history`.
+#'   Format B is auto-detected and converted to Format A before dispatch.
+#'   See [calibrate_rake()], [calibrate_linear()], or [calibrate_logit()]
+#'   for per-method target validation rules.
+#' @param weights <[`tidy-select`][tidyselect::language]> Weight column
+#'   (bare name). Forwarded to the dispatched function. `NULL` (the default)
+#'   auto-detects the weight column from survey object `@variables$weights`.
+#' @param wt_name `NULL` (the default) or a `character(1)`. When `NULL`,
+#'   calibrated weights overwrite the existing weight column in place. When a
+#'   character string, a new column is added and `@variables$weights` updated.
+#'   Forwarded to the dispatched function.
+#' @param type `character(1)`. `"prop"` (the default): `targets` values are
+#'   proportions. `"count"`: `targets` values are population counts. Forwarded
+#'   to the dispatched function.
+#' @param reference_design A `survey_taylor` or `NULL` (the default). Stored
+#'   in the weighting history for provenance. Forwarded to the dispatched
+#'   function.
+#' @param ... Additional arguments forwarded as-is to the dispatched function.
+#'   See [calibrate_rake()], [calibrate_linear()], or [calibrate_logit()]
+#'   for available arguments (e.g., `algorithm`, `bounds`, `cap`, `control`).
+#' @param method `character(1)`. Calibration method: `"rake"` (the default),
+#'   `"linear"`, or `"logit"`. Matched with [rlang::arg_match()].
+#'   - `"rake"`: multiplicative raking via [calibrate_rake()]. Weights remain
+#'     strictly positive. Two algorithms available via `algorithm` in `...`.
+#'   - `"linear"`: GREG estimator via [calibrate_linear()]. Exact in one step;
+#'     may produce negative weights for large discrepancies.
+#'   - `"logit"`: logit-bounded calibration via [calibrate_logit()]. G-weight
+#'     ratios constrained to an open interval `(L, U)` via `bounds` in `...`.
 #'
-#' @examples
-#' df <- data.frame(
-#'   age_group = c("18-34", "35-54", "55+", "18-34", "35-54"),
-#'   sex = c("M", "F", "M", "F", "M"),
-#'   stringsAsFactors = FALSE
-#' )
-#' pop <- list(
-#'   age_group = c("18-34" = 0.30, "35-54" = 0.40, "55+" = 0.30),
-#'   sex = c("M" = 0.48, "F" = 0.52)
-#' )
-#' result <- calibrate(df, variables = c(age_group, sex), population = pop)
+#' @returns An object of the same class as `data`, as returned by the
+#'   dispatched function. See [calibrate_rake()], [calibrate_linear()], or
+#'   [calibrate_logit()] for class-specific return value details and
+#'   weighting history guarantees.
 #'
+#' @details
+#' All three methods implement the Deville-Sarndal calibration framework:
+#' each adjusts survey weights so that weighted auxiliary totals match
+#' known population totals. The methods share a variance estimator and
+#' differ in the weight-ratio function \eqn{F} applied during calibration
+#' (Deville & Sarndal 1992; Deville, Sarndal & Sautory 1993). The value of
+#' \eqn{F} is the g-weight (the ratio of calibrated to starting weight).
+#'
+#' **Raking** (`method = "rake"`, the default) uses the multiplicative
+#' function \eqn{F(u) = \exp(u)}, which keeps all calibrated weights
+#' strictly positive. For marginal targets, raking reduces to classical
+#' iterative proportional fitting (Deville, Sarndal & Sautory 1993). Two
+#' algorithms are available via `algorithm` (passed through `...`):
+#' `"classic_ipf"` (the default; chi-square variable selection ported
+#' from the ANES raking procedure, DeBell & Krosnick 2009) and `"nr"`
+#' (Newton-Raphson). The weight ratio \eqn{w_k / d_k} is unbounded above.
+#'
+#' **Linear** (`method = "linear"`) uses \eqn{F(u) = 1 + u}, equivalent
+#' to the generalized regression (GREG) estimator. The solution is exact
+#' in a single step — no iteration required — making it the fastest method
+#' (Deville & Sarndal 1992). The weight ratio is unbounded in both
+#' directions; large sample-to-population discrepancies can produce
+#' negative calibrated weights.
+#'
+#' **Logit** (`method = "logit"`) constrains the weight ratio
+#' \eqn{w_k / d_k} to the open interval \eqn{(L, U)} via a logit-bounded
+#' \eqn{F} function (Deville & Sarndal 1992; Deville, Sarndal & Sautory
+#' 1993). Pass `bounds` via `...` to control the interval (default
+#' `c(1e-6, 1e6)`). Note that bounds apply to the ratio of calibrated to
+#' design weight, not to calibrated weights directly.
+#'
+#' Post-stratification does not route through `calibrate()`. When you
+#' have population values for every joint cell of the stratification
+#' variables — a full cross-tabulation, not separate margins — use
+#' [poststratify()], which matches those cells exactly in one pass.
+#'
+#' For full algorithm documentation, convergence criteria, and
+#' replicate-weight handling, see [calibrate_rake()],
+#' [calibrate_linear()], and [calibrate_logit()].
+#'
+#' @references
+#'   DeBell, M. and Krosnick, J.A. (2009). Computing Weights for American
+#'   National Election Study Survey Data. ANES Technical Report series,
+#'   no. nes012427. Ann Arbor, MI, and Palo Alto, CA: American National
+#'   Election Studies.
+#'
+#'   Deville, J.-C. and Sarndal, C.-E. (1992). Calibration estimators in
+#'   survey sampling. *Journal of the American Statistical Association*,
+#'   87(418), 376--382.
+#'
+#'   Deville, J.-C., Sarndal, C.-E. and Sautory, O. (1993). Generalized
+#'   raking procedures in survey sampling. *Journal of the American
+#'   Statistical Association*, 88(423), 1013--1020.
+#'
+#'   Kott, P.S. (2003). An overview of calibration weighting. 2003 Joint
+#'   Statistical Meetings — Section on Survey Research Methods.
+#'
+#' @seealso [calibrate_rake()], [calibrate_linear()], [calibrate_logit()],
+#'   [poststratify()]. For the class system, the standard workflows, and a
+#'   glossary of terms, see the [Getting started
+#'   article](https://jdenn0514.github.io/surveywts/articles/getting-started.html).
 #' @family calibration
 #' @export
+#'
+#' @examples
+#' ns_wave1_svy <- surveycore::as_survey_nonprob(ns_wave1, weights = weight)
+#'
+#' targets_a <- list(
+#'   sex    = c("Male" = 0.49, "Female" = 0.51),
+#'   age_f3 = c("18-34" = 0.30, "35-54" = 0.33, "55+" = 0.37)
+#' )
+#'
+#' # Format A + rake (default) --------------------------------------------
+#' result <- calibrate(ns_wave1_svy, targets = targets_a)
+#' summarize_weights(result)
+#'
+#' # Format A + linear ----------------------------------------------------
+#' calibrate(ns_wave1_svy, targets = targets_a, method = "linear")
+#'
+#' # Format A + logit -----------------------------------------------------
+#' calibrate(ns_wave1_svy, targets = targets_a, method = "logit")
+#'
+#' # Format B + rake ------------------------------------------------------
+#' targets_b <- data.frame(
+#'   variable = c("sex", "sex", "age_f3", "age_f3", "age_f3"),
+#'   level    = c("Male", "Female", "18-34", "35-54", "55+"),
+#'   target   = c(0.49, 0.51, 0.30, 0.33, 0.37)
+#' )
+#' calibrate(ns_wave1_svy, targets = targets_b)
 calibrate <- function(
   data,
-  variables,
-  population,
+  targets,
   weights = NULL,
-  wt_name = "wts",
-  method = c("linear", "logit"),
+  wt_name = NULL,
   type = c("prop", "count"),
-  control = list(maxit = 50, epsilon = 1e-7)
+  reference_design = NULL,
+  ...,
+  method = c("rake", "linear", "logit")
 ) {
-  # ---- Capture call and arguments before any evaluation --------------------
-  call_str <- deparse(match.call())
   method <- rlang::arg_match(method)
-  type <- rlang::arg_match(type)
   weights_quo <- rlang::enquo(weights)
-  .validate_wt_name(wt_name)
 
-  # Merge control with defaults
-  control <- utils::modifyList(list(maxit = 50, epsilon = 1e-7), control)
-
-  # ---- 1. Input class check -----------------------------------------------
-  .check_input_class(data)
-
-  # ---- 2. Empty data check ------------------------------------------------
-  data_df <- if (inherits(data, "data.frame")) as.data.frame(data) else data@data
-  if (nrow(data_df) == 0L) {
-    cli::cli_abort(
-      c(
-        "x" = "{.arg data} has 0 rows.",
-        "i" = "This operation is undefined on empty data.",
-        "v" = "Ensure {.arg data} has at least one row."
-      ),
-      class = "surveywts_error_empty_data"
-    )
-  }
-
-  # ---- 3. Weight column name and validation --------------------------------
-  weight_col <- .get_weight_col_name(data, weights_quo)
-
-  # For plain data.frame with weights = NULL: create uniform weights column
-  if (inherits(data, "data.frame") && rlang::quo_is_null(weights_quo) &&
-      !inherits(data, "weighted_df")) {
-    data_df[[wt_name]] <- rep(1 / nrow(data_df), nrow(data_df))
-    weight_col <- wt_name
-  }
-
-  # Extract the plain data frame for validation (survey objects use @data)
-  plain_df <- if (inherits(data, "data.frame")) data_df else data@data
-
-  # For data.frame inputs, we need the weight column in plain_df
-  if (inherits(data, "data.frame") && !weight_col %in% names(plain_df)) {
-    # This case is already handled above (uniform weights added to data_df)
-    plain_df <- data_df
-  }
-
-  .validate_weights(plain_df, weight_col)
-
-  # ---- 4. Resolve variable names via tidy-select --------------------------
-  vars_expr <- rlang::enquo(variables)
-  variable_names <- tidyselect::eval_select(vars_expr, plain_df) |> names()
-
-  # ---- 5. Check population names are in data ------------------------------
-  pop_names <- names(population)
-  missing_pop_vars <- setdiff(pop_names, names(plain_df))
-  if (length(missing_pop_vars) > 0L) {
-    var <- missing_pop_vars[[1L]]
-    cli::cli_abort(
-      c(
-        "x" = "Population variable {.field {var}} not found in {.arg data}.",
-        "i" = "Names in {.arg population} must match column names in {.arg data}.",
-        "v" = paste0(
-          "Check spelling: available columns are ",
-          "{.and {.field {names(plain_df)}}}."
-        )
-      ),
-      class = "surveywts_error_population_variable_not_found"
-    )
-  }
-
-  # ---- 6. Validate calibration variables (categorical, no NAs) ------------
-  .validate_calibration_variables(plain_df, variable_names, "Calibration")
-
-  # ---- 7. Validate population marginals -----------------------------------
-  .validate_population_marginals(population, pop_names, plain_df, type)
-
-  # ---- 8. Extract starting weights and compute before-stats ---------------
-  weights_vec <- .get_weight_vec(data, weights_quo)
-  before_stats <- .compute_weight_stats(weights_vec)
-
-  # Convert proportions to counts for the engine
-  total_w <- sum(weights_vec)
-  if (type == "prop") {
-    population_counts <- lapply(population, function(p) p * total_w)
-  } else {
-    population_counts <- population
-  }
-
-  # ---- 9. Build calibration spec and run engine ---------------------------
-  vars_spec <- lapply(variable_names, function(v) {
-    targets <- population_counts[[v]]
-    list(col = v, targets = targets)
-  })
-
-  calibration_spec <- list(
-    type = method,
-    variables = vars_spec,
-    total_n = nrow(plain_df)
-  )
-
-  engine_result <- .calibrate_engine(
-    data_df = plain_df,
-    weights_vec = weights_vec,
-    calibration_spec = calibration_spec,
-    method = method,
-    control = control
-  )
-
-  new_weights <- engine_result$weights
-  convergence <- engine_result$convergence
-
-  # ---- 10. Warn on negative calibrated weights (linear method) ------------
-  n_neg <- sum(new_weights < 0, na.rm = TRUE)
-  if (n_neg > 0L) {
-    cli::cli_warn(
-      c(
-        "!" = paste0(
-          "Linear calibration produced {n_neg} ",
-          "negative calibrated weight(s)."
-        ),
-        "i" = "Negative weights can cause invalid variance estimates.",
-        "i" = paste0(
-          "Consider {.code method = \"logit\"} for bounded weights, ",
-          "or review population totals."
-        )
-      ),
-      class = "surveywts_warning_negative_calibrated_weights"
-    )
-  }
-
-  # ---- 11. Compute after-stats and build history entry --------------------
-  after_stats <- .compute_weight_stats(new_weights)
-
-  # Determine current history for step number
-  current_history <- .get_history(data)
-
-  history_entry <- .make_history_entry(
-    step = length(current_history) + 1L,
-    operation = "calibration",
-    weight_col = if (inherits(data, "data.frame")) {
-      wt_name
-    } else {
-      data@variables$weights
-    },
-    call_str = call_str,
-    parameters = list(
-      variables = variable_names,
-      population = population,
-      method = method,
+  switch(
+    method,
+    rake = calibrate_rake(
+      data,
+      targets = targets,
+      weights = !!weights_quo,
+      wt_name = wt_name,
       type = type,
-      control = control
+      reference_design = reference_design,
+      ...
     ),
-    before_stats = before_stats,
-    after_stats = after_stats,
-    convergence = convergence
+    linear = calibrate_linear(
+      data,
+      targets = targets,
+      weights = !!weights_quo,
+      wt_name = wt_name,
+      type = type,
+      reference_design = reference_design,
+      ...
+    ),
+    logit = calibrate_logit(
+      data,
+      targets = targets,
+      weights = !!weights_quo,
+      wt_name = wt_name,
+      type = type,
+      reference_design = reference_design,
+      ...
+    )
   )
-
-  # ---- 12. Build output ---------------------------------------------------
-  if (inherits(data, "data.frame")) {
-    # data.frame or weighted_df → weighted_df
-    out_df <- plain_df
-    out_df[[wt_name]] <- new_weights
-    new_history <- c(current_history, list(history_entry))
-    .make_weighted_df(out_df, wt_name, new_history)
-  } else {
-    # survey object → same class (class preserved; only weights + history updated)
-    .update_survey_weights(data, new_weights, history_entry)
-  }
 }

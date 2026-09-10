@@ -1,0 +1,101 @@
+# R/summarize_weights.R
+#
+# summarize_weights() — tabular weight summary, optionally by group.
+
+# ---------------------------------------------------------------------------
+# summarize_weights()
+# ---------------------------------------------------------------------------
+
+#' Report summary statistics for the weight distribution
+#'
+#' Returns a tibble of distribution statistics for the weight column; the
+#' full column set is listed under **Value**. Rows with a zero weight
+#' (typically produced by [adjust_nonresponse()]) are excluded before the
+#' statistics are computed. Pass `by` to compute statistics separately
+#' within each subgroup defined by one or more grouping variables.
+#'
+#' @inheritParams effective_sample_size
+#' @param by <[`tidy-select`][tidyselect::language]> Optional grouping
+#'   variables. When `NULL` (the default), a single-row summary over all
+#'   observations is returned. When specified, one row is returned per
+#'   unique group combination.
+#'
+#' @returns A tibble with columns `n` (rows summarized), `n_positive` (rows
+#'   with a weight above zero), `n_zero` (rows with a weight of exactly
+#'   zero), `mean`, `cv`, `min`, `p25`, `p50`, `p75`, `max`, and `ess`
+#'   (Kish effective sample size). Because zero-weight rows are excluded
+#'   before the summary, `n_zero` is `0` and `n_positive` equals `n`. When
+#'   `by` is non-`NULL`, the group columns precede the summary columns.
+#'
+#' @seealso [effective_sample_size()], [weight_variability()]. For the
+#'   class system, the standard workflows, and a glossary of terms, see
+#'   the [Getting started
+#'   article](https://jdenn0514.github.io/surveywts/articles/getting-started.html).
+#' @family diagnostics
+#' @export
+#'
+#' @examples
+#' ns_wave1_svy <- surveycore::as_survey_nonprob(ns_wave1, weights = weight)
+#'
+#' # overall summary --------------------------------------------------------
+#' summarize_weights(ns_wave1_svy)
+#' #> # A tibble: 1 × 11
+#' #>       n n_positive n_zero  mean    cv     min   p25   p50   p75   max   ess
+#' #>   <int>      <int>  <int> <dbl> <dbl>   <dbl> <dbl> <dbl> <dbl> <dbl> <dbl>
+#' #> 1  6422       6422      0  1.00  1.36 0.00382 0.153 0.400  1.13  4.78 2255.
+#'
+#' # grouped by sex ---------------------------------------------------------
+#' summarize_weights(ns_wave1_svy, by = sex)
+#' #> # A tibble: 2 × 12
+#' #>   sex        n n_positive n_zero  mean    cv     min   p25   p50   p75   max
+#' #>   <fct>  <int>      <int>  <int> <dbl> <dbl>   <dbl> <dbl> <dbl> <dbl> <dbl>
+#' #> 1 Male    3632       3632      0 0.877  1.44 0.00382 0.138 0.353 0.893  4.78
+#' #> 2 Female  2790       2790      0 1.16   1.26 0.00382 0.173 0.494 1.47   4.77
+#' #> # ℹ 1 more variable: ess <dbl>
+summarize_weights <- function(x, weights = NULL, by = NULL) {
+  weights_quo <- rlang::enquo(weights)
+  by_quo <- rlang::enquo(by)
+
+  vld <- .diag_validate_input(x, weights_quo)
+
+  # Filter out exact zeros before validation (zero weights arise from
+  # nonresponse adjustment and should be excluded from diagnostics).
+  data_df <- vld$data_df
+  weight_col <- vld$weight_col
+  w_all <- data_df[[weight_col]]
+  data_df <- data_df[is.na(w_all) | w_all != 0, , drop = FALSE]
+  .validate_weights(data_df, weight_col)
+
+  by_names <- if (rlang::quo_is_null(by_quo)) {
+    character(0L)
+  } else {
+    tidyselect::eval_select(by_quo, data_df) |> names()
+  }
+
+  if (length(by_names) == 0L) {
+    w <- data_df[[weight_col]]
+    tibble::as_tibble(.compute_weight_stats(w))
+  } else {
+    cell_keys <- do.call(
+      paste,
+      c(lapply(by_names, function(v) as.character(data_df[[v]])), sep = "//")
+    )
+    groups <- split(seq_len(nrow(data_df)), cell_keys)
+    # Preserve first-occurrence order (not alphabetical from split())
+    key_order <- unique(cell_keys)
+    groups <- groups[key_order]
+
+    result_dfs <- lapply(names(groups), function(gkey) {
+      idx <- groups[[gkey]]
+      w <- data_df[[weight_col]][idx]
+      stats_tbl <- tibble::as_tibble(.compute_weight_stats(w))
+      group_row <- data_df[idx[[1L]], by_names, drop = FALSE]
+      dplyr::bind_cols(
+        tibble::as_tibble(group_row),
+        stats_tbl
+      )
+    })
+
+    dplyr::bind_rows(result_dfs)
+  }
+}

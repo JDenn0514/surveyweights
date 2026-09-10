@@ -2,91 +2,150 @@
 % Please edit documentation in R/poststratify.R
 \name{poststratify}
 \alias{poststratify}
-\title{Post-stratify survey weights to known joint population cell totals}
+\title{Fit weights using post-stratification}
 \usage{
 poststratify(
   data,
-  strata,
-  population,
+  targets,
   weights = NULL,
-  wt_name = "wts",
-  type = c("prop", "count")
+  wt_name = NULL,
+  type = c("prop", "count"),
+  reference_design = NULL
 )
 }
 \arguments{
-\item{data}{A \code{data.frame}, \code{weighted_df}, \code{survey_taylor}, or
-\code{survey_nonprob}. \code{survey_replicate} -> error. Any other class -> error.}
+\item{data}{A \code{survey_nonprob}, \code{survey_taylor}, or \code{survey_replicate}. Any
+other class -> error. When \code{data} is a \code{survey_replicate},
+post-stratification is applied independently to every replicate weight
+column using the same population \code{targets}. Replicate columns where any
+cell has zero or negative total weight fail calibration; a
+\code{surveywts_warning_replicate_calibration_failed} warning is emitted and
+the original replicate weights are kept.}
 
-\item{strata}{<\code{\link[tidyselect:language]{tidy-select}}> Stratification
-variables that jointly define the cells. Specify as a bare name or
-\code{c(var1, var2, ...)}. Unlike \code{\link[=calibrate]{calibrate()}} and \code{\link[=rake]{rake()}}, strata
-variables may be any type (character, factor, integer, numeric).}
+\item{targets}{A \code{data.frame} with one column per stratification variable
+(column names must match column names in \code{data}), plus a column named
+\code{"target"}, and one row per unique cell combination. The stratification
+variables are automatically identified as \code{setdiff(names(targets), "target")}.
 
-\item{population}{A \code{data.frame} with one column per variable selected by
-\code{strata} (column names must match exactly), one column named \code{"target"},
-and one row per unique cell combination.
+Unlike \code{\link[=calibrate_linear]{calibrate_linear()}} and \code{\link[=calibrate_rake]{calibrate_rake()}}, \code{targets} must be a
+\code{data.frame} — named lists are not accepted
+(\code{surveywts_error_margins_format_invalid}). The \code{targets} data frame must
+have at least one non-\code{"target"} column
+(\code{surveywts_error_no_strata_variables} if zero).
 
 For \code{type = "count"}: values in \code{target} must be strictly positive.
 For \code{type = "prop"}: values in \code{target} must sum to 1.0 (within \code{1e-6}).}
 
 \item{weights}{<\code{\link[tidyselect:language]{tidy-select}}> Weight column name
-(bare name). \code{NULL} -> auto-detected from \code{weighted_df} attribute or
-survey object \verb{@variables$weights}. For plain \code{data.frame} with
-\code{weights = NULL}, uniform starting weights are used.}
+(bare name). \code{NULL} -> auto-detected from survey object
+\verb{@variables$weights}.}
 
-\item{wt_name}{Character scalar. Name of the output weight column in the
-returned \code{weighted_df}. Default \code{"wts"}. Ignored when \code{data} is a survey
-object (\code{survey_taylor} or \code{survey_nonprob}).}
+\item{wt_name}{\code{NULL} (default) or a character scalar. When \code{NULL},
+calibrated weights overwrite the existing weight column in place. When a
+character string, a new column is added and \verb{@variables$weights} updated.}
 
 \item{type}{Character scalar. \code{"prop"} (default): \code{target} values are
 proportions summing to 1.0. \code{"count"}: \code{target} values are population
-counts. Consistent with \code{\link[=calibrate]{calibrate()}} and \code{\link[=rake]{rake()}}.}
+counts. Consistent with \code{\link[=calibrate_linear]{calibrate_linear()}} and \code{\link[=calibrate_rake]{calibrate_rake()}}.}
+
+\item{reference_design}{A \code{survey_taylor} object or \code{NULL}. The probability
+survey from which \code{targets} were estimated. When non-\code{NULL}, stored in
+the history entry with \code{targets_from_reference = TRUE}. Any non-\code{NULL}
+non-\code{survey_taylor} value triggers
+\code{surveywts_error_reference_design_not_taylor}.}
 }
 \value{
 \itemize{
-\item \code{data.frame} or \code{weighted_df} input -> \code{weighted_df}
 \item \code{survey_taylor} or \code{survey_nonprob} input -> same class as input
-(\code{survey_taylor} or \code{survey_nonprob}; class is preserved)
+(class preserved); \verb{@calibration} slot is populated
+\item \code{survey_replicate} input -> \code{survey_replicate} (class preserved);
+\verb{@calibration} slot is populated, including \code{replicate_converged}
 }
 
 The weight column in the output contains post-stratified weights. A
 history entry with \code{operation = "poststratify"} is appended to
 \code{weighting_history}.
+For \code{survey_replicate} inputs, each replicate weight column is also
+post-stratified. Failed replicates retain their original weights and are
+recorded in \code{output@calibration$replicate_converged} as \code{FALSE}.
 }
 \description{
 Adjusts survey weights so that the weighted cell counts (or proportions)
 match known population values for every joint combination of stratification
-variables. Unlike \code{\link[=calibrate]{calibrate()}} and \code{\link[=rake]{rake()}}, which match marginal totals,
-\code{poststratify()} matches exact cross-tabulation cells in a single pass.
+variables. Unlike \code{\link[=calibrate_linear]{calibrate_linear()}} and \code{\link[=calibrate_rake]{calibrate_rake()}}, which match
+marginal totals, \code{poststratify()} matches exact cross-tabulation cells in
+a single pass.
 }
+\details{
+\strong{When to use.} Choose post-stratification when you have population
+values for every joint cell of the stratification variables and
+every cell contains sample members. A populated cell with no sample
+members makes the adjustment undefined (Deville & Sarndal 1992).
+With several variables the cells thin out quickly; when cells run
+empty, match margins instead via \code{\link[=calibrate]{calibrate()}}.
+}
+\section{Algorithm}{
+
+Within each cell \eqn{h} defined by the joint combination of
+stratification variables, the calibration factor is
+\deqn{c_h = \frac{T_h}{W_h}}
+where \eqn{T_h} is the target cell total (population count or proportion
+scaled to population size) and \eqn{W_h = \sum_{k \in h} w_k} is the
+sum of current weights in cell \eqn{h}. The calibrated weight for each
+unit in cell \eqn{h} is \eqn{w_k^* = c_h \cdot w_k}. The solution is
+exact in one pass — no iteration is required.
+}
+
 \examples{
-df <- data.frame(
-  age_group = c("18-34", "35-54", "55+", "18-34", "35-54", "55+"),
-  sex = c("M", "M", "M", "F", "F", "F"),
-  stringsAsFactors = FALSE
-)
+ns_wave1_svy <- surveycore::as_survey_nonprob(ns_wave1, weights = weight)
 
-# Proportion targets (default type = "prop")
-pop_prop <- data.frame(
-  age_group = c("18-34", "35-54", "55+", "18-34", "35-54", "55+"),
-  sex = c("M", "M", "M", "F", "F", "F"),
-  target = c(0.14, 0.18, 0.17, 0.15, 0.19, 0.17)
+# joint cell proportions (sex x age_f3, 6 cells, sum = 1.000) --------
+ps_cells <- data.frame(
+  sex    = rep(c("Male", "Female"), each = 3),
+  age_f3 = rep(c("18-34", "35-54", "55+"), times = 2),
+  target = c(0.1470, 0.1617, 0.1813, 0.1530, 0.1683, 0.1887)
 )
-result <- poststratify(df, strata = c(age_group, sex), population = pop_prop)
+result <- poststratify(ns_wave1_svy, targets = ps_cells)
+summarize_weights(result)
 
-# Count targets (explicit type = "count")
-pop_count <- data.frame(
-  age_group = c("18-34", "35-54", "55+", "18-34", "35-54", "55+"),
-  sex = c("M", "M", "M", "F", "F", "F"),
-  target = c(14000, 18000, 17000, 15000, 19000, 17000)
+# type = "count" with US adult population counts (260 million) ------------
+ps_counts <- data.frame(
+  sex    = rep(c("Male", "Female"), each = 3),
+  age_f3 = rep(c("18-34", "35-54", "55+"), times = 2),
+  target = c(0.1470, 0.1617, 0.1813, 0.1530, 0.1683, 0.1887) * 260000000
 )
-result2 <- poststratify(df, strata = c(age_group, sex),
-  population = pop_count, type = "count")
+poststratify(ns_wave1_svy, targets = ps_counts, type = "count")
+}
+\references{
+Valliant, R. (1993). Poststratification and conditional variance
+estimation. \emph{Journal of the American Statistical Association},
+88(421), 89--96.
 
+Deville, J.-C. and Sarndal, C.-E. (1992). Calibration estimators in
+survey sampling. \emph{Journal of the American Statistical Association},
+87(418), 376--382.
+
+Rao, J. N. K., Yung, W. and Hidiroglou, M. A. (2002). Estimating
+equations for the analysis of survey data using poststratification
+information. \emph{Sankhya}, 64(2), 364--378.
+
+Deville, J.-C., Sarndal, C.-E. and Sautory, O. (1993). Generalized
+raking procedures in survey sampling. \emph{Journal of the American
+Statistical Association}, 88(423), 1013--1020.
+
+Rao, J. N. K., Wu, C. F. J. and Yue, K. (1992). Some recent work on
+resampling methods for complex surveys. \emph{Survey Methodology},
+18(2), 209--217.
 }
 \seealso{
-Other calibration: 
-\code{\link{calibrate}()},
-\code{\link{rake}()}
+\code{\link[=calibrate]{calibrate()}}, \code{\link[=calibrate_rake]{calibrate_rake()}}, \code{\link[=calibrate_linear]{calibrate_linear()}},
+\code{\link[=calibrate_logit]{calibrate_logit()}}. For the class system, the standard workflows, and
+a glossary of terms, see the \href{https://jdenn0514.github.io/surveywts/articles/getting-started.html}{Getting started article}.
+
+Other calibration:
+\code{\link[=calibrate]{calibrate()}},
+\code{\link[=calibrate_linear]{calibrate_linear()}},
+\code{\link[=calibrate_logit]{calibrate_logit()}},
+\code{\link[=calibrate_rake]{calibrate_rake()}}
 }
 \concept{calibration}

@@ -11,3 +11,16 @@
 ^pkgdown$
 ^LICENSE\.md$
 ^docs$
+^\.surveywts-workspace$
+^VENDORED\.md$
+^archive$
+^changelog$
+^audit\.md$
+^implementation\.md$
+^review\.md$
+^shipper\.md$
+^\.agents$
+^\.superpowers$
+^skills-lock\.json$
+^air\.toml$
+^vignettes/articles$

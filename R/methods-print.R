@@ -30,8 +30,10 @@ S7::method(print, surveycore::survey_nonprob) <- function(x, n = 10, ...) {
   # Header
   cat(
     "# A calibrated survey design:",
-    formatC(n_rows, format = "d", big.mark = ","), "observations,",
-    n_cols, "variables\n"
+    formatC(n_rows, format = "d", big.mark = ","),
+    "observations,",
+    n_cols,
+    "variables\n"
   )
 
   # Variance method (hardcoded for Calibration release — see spec §X)
@@ -39,17 +41,25 @@ S7::method(print, surveycore::survey_nonprob) <- function(x, n = 10, ...) {
 
   # Design structure line
   ids_str <- .format_design_vars(vars$ids)
-  strata_str <- if (is.null(vars$strata) || length(vars$strata) == 0L ||
-                      all(vars$strata == "")) {
+  strata_str <- if (
+    is.null(vars$strata) || length(vars$strata) == 0L || all(vars$strata == "")
+  ) {
     "NULL"
   } else {
     paste0("~", paste(vars$strata, collapse = " + "))
   }
-  weights_str <- if (is.null(vars$weights) || vars$weights == "") "NULL" else vars$weights
+  weights_str <- if (is.null(vars$weights) || vars$weights == "") {
+    "NULL"
+  } else {
+    vars$weights
+  }
   cat(
-    "# IDs:", ids_str,
-    "| Strata:", strata_str,
-    "| Weights:", weights_str,
+    "# IDs:",
+    ids_str,
+    "| Strata:",
+    strata_str,
+    "| Weights:",
+    weights_str,
     "\n"
   )
 
@@ -62,6 +72,86 @@ S7::method(print, surveycore::survey_nonprob) <- function(x, n = 10, ...) {
     cat("# Weighting history:", n_steps, step_word, "\n")
     for (entry in history) {
       cat(.format_history_step(entry), "\n")
+    }
+  }
+
+  # Bootstrap replicates (if present)
+  repwts <- x@variables$repweights
+  if (!is.null(repwts) && length(repwts) > 0L) {
+    boot_entries <- Filter(
+      function(e) identical(e$operation, "bootstrap_weights"),
+      history
+    )
+    if (length(boot_entries) > 0L) {
+      e <- boot_entries[[length(boot_entries)]]
+      cat(sprintf(
+        "# Bootstrap replicates: %d (%s, level %s)\n",
+        e$draws_used,
+        e$type,
+        e$level
+      ))
+    }
+  }
+
+  invisible(x)
+}
+
+# ---------------------------------------------------------------------------
+# print method for survey_replicate
+# ---------------------------------------------------------------------------
+
+# Class defined in surveycore (surveycore::survey_replicate)
+S7::method(print, surveycore::survey_replicate) <- function(x, ...) {
+  vars <- x@variables
+  history <- x@metadata@weighting_history
+  n_rep <- length(vars$repweights)
+
+  cat(sprintf("<survey_replicate: %s>\n", vars$type))
+  cat(sprintf(
+    "N = %s observations\n",
+    formatC(nrow(x@data), format = "d", big.mark = ",")
+  ))
+
+  if (n_rep > 0L) {
+    first_rep <- vars$repweights[[1L]]
+    last_rep <- vars$repweights[[n_rep]]
+    cat(sprintf(
+      "%d replicate weights (%s ... %s)\n",
+      n_rep,
+      first_rep,
+      last_rep
+    ))
+  }
+
+  cat(sprintf("Scale: %s\n", format(vars$scale, digits = 4)))
+
+  if (!is.null(vars$rscales) && length(vars$rscales) > 1L) {
+    cat(sprintf(
+      "Replicate scales: vector of length %d, range [%s, %s]\n",
+      length(vars$rscales),
+      format(min(vars$rscales), digits = 4),
+      format(max(vars$rscales), digits = 4)
+    ))
+  }
+
+  cat(sprintf("mse = %s\n", vars$mse))
+
+  wt_vec <- x@data[[vars$weights]]
+  cat("\nWeights:\n")
+  cat(sprintf("  min:    %.2f\n", min(wt_vec)))
+  cat(sprintf("  median: %.2f\n", stats::median(wt_vec)))
+  cat(sprintf("  mean:   %.2f\n", mean(wt_vec)))
+  cat(sprintf("  max:    %.2f\n", max(wt_vec)))
+  cv_val <- stats::sd(wt_vec) / mean(wt_vec)
+  cat(sprintf("  CV:     %.2f\n", cv_val))
+
+  cat("\nWeighting history:\n")
+  n_steps <- length(history)
+  if (n_steps == 0L) {
+    cat("  (none)\n")
+  } else {
+    for (entry in history) {
+      cat("  ", .format_history_step(entry), "\n", sep = "")
     }
   }
 
