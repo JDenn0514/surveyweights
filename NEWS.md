@@ -1,4 +1,205 @@
-# surveywts 0.2.1 (development)
+# surveywts 0.3.0
+
+## New features
+
+### Calibration
+
+* `calibrate_rake()` replaces `rake()`. It takes `targets` in place of
+  `margins` and `algorithm` in place of `method`. `algorithm = "classic_ipf"`
+  is iterative proportional fitting, the engine `rake()` used.
+  `algorithm = "nr"` is Newton-Raphson raking (Deville, Sarndal & Sautory
+  1993), which uses the exponential calibration function.
+
+* `calibrate_linear()` calibrates to linear (GREG) and truncated-linear
+  targets, following Deville & Sarndal (1992). Bounds are optional, and
+  `bounds_scale` reads them as multiplicative or absolute. The calibrated
+  weights match `survey::calibrate()` to within 1e-8.
+
+* `calibrate_logit()` calibrates with the logit calibration function,
+  following Deville, Sarndal & Sautory (1993). `bounds` is required and holds
+  each g-weight inside the open interval it names, so every calibrated weight
+  is strictly positive. The weights match
+  `survey::calibrate(calfun = "logit")` to within 1e-8.
+
+* `calibrate_rake()`, `calibrate_linear()`, and `calibrate_logit()` take
+  `unit_scale`, a vector of per-unit scaling factors (the q-weights of
+  Deville & Sarndal 1992).
+
+* The four calibration functions accept `survey_replicate` input and
+  calibrate every replicate weight column.
+  `@calibration$replicate_converged` names the columns that did not converge.
+
+* A survey object returned by `calibrate_rake()`, `calibrate_linear()`,
+  `calibrate_logit()`, or `poststratify()` carries a `@calibration` slot. The
+  slot holds the calibration provenance: the g-weights, the discrepancy from
+  the targets, the cross-product inverse, and the converged Lagrange vector.
+
+* The four calibration functions take `reference_design`. A `survey_taylor`
+  supplied here is stored in the weighting history, so a later
+  quasi-randomization bootstrap can re-estimate the targets in each draw.
+
+### Sample-based calibration
+
+* `calibrate_to_survey()` calibrates a design to a control survey. Each
+  replicate is calibrated to the matching control replicate, so the variance
+  of the control totals reaches the variance estimate. `targets` adds fixed
+  census margins alongside the control-survey margins.
+
+* `calibrate_to_estimate()` calibrates to control totals given as a named
+  list of counts and a variance-covariance matrix. Each replicate is
+  calibrated to a perturbed draw from that distribution.
+
+* Both functions accept a `survey_nonprob` that carries replicate weights,
+  and both return the class of the design they were given.
+
+### Non-probability samples
+
+* `ipw()` builds inverse probability weights for a non-probability sample
+  from a probability reference design, following Chen, Li & Wu (2020) and
+  Elliott & Valliant (2017). The links `logit`, `probit`, and `cloglog` are
+  supported. The default `estimating_eq = "gee"` solves the calibration
+  estimating equation with `nleqslv::nleqslv()` and gives exact covariate
+  balance; `estimating_eq = "mle"` solves the pseudo-likelihood score
+  equation. `reference` accepts a `survey_taylor` or a `survey_replicate`.
+
+* `adjust_nonresponse(method = "propensity")` fits a response propensity
+  model and adjusts each respondent weight by its own inverse score. This
+  method requires `formula`.
+
+* `adjust_nonresponse(method = "propensity-cell")` sorts the propensity
+  scores into quantile cells, `control$n_cells` of them, and redistributes
+  the nonrespondent weight inside each cell.
+
+* `redistribute_weights()` takes the weight of the rows that `reduce_if`
+  names and transfers it to the rows that `increase_if` names, in proportion
+  to the weight those rows already hold. `by` restricts the transfer to
+  within groups.
+
+### Replicate weights for non-probability samples
+
+* `create_bootstrap_weights(type = "quasi-randomization")` produces
+  quasi-randomization bootstrap weights for a `survey_nonprob`. Each draw
+  resamples the sample and the reference with replacement, then re-estimates
+  the weights. Three histories are supported: IPW alone, calibration alone,
+  and both.
+
+* `create_jackknife_weights(type = "grouped")` produces delete-a-group
+  jackknife weights for a `survey_nonprob` (Valliant, Brick & Dever 2008).
+  It refits the propensity model in every replicate and replays a stored
+  calibration.
+
+### Weight utilities
+
+* `trim_weights()` clips extreme weights and redistributes the trimmed weight
+  to the units it kept, following Potter & Zheng (2015). The cutpoints come
+  from the interquartile range, from absolute bounds, or from percentiles.
+  `strict = TRUE` repeats the trim until every weight is inside the bounds.
+
+* `rescale_weights()` scales the weights so they sum to the sample size,
+  either across the sample or inside groups that `by` names.
+
+* Both functions also operate on each replicate weight column of a
+  `survey_replicate`, and of a `survey_nonprob` that carries replicate
+  weights.
+
+### Diagnostics
+
+* `effective_sample_size()`, `weight_variability()`, and
+  `summarize_weights()` accept `survey_replicate` input. They read the main
+  weight column; they do not compute the replicate variance of a diagnostic.
+
+## Breaking changes
+
+### `rake()` is removed
+
+Call `calibrate_rake()` instead. `targets` replaces `margins`, and
+`algorithm` replaces `method`. The algorithm named `"anesrake"` is now
+`"classic_ipf"`; the algorithm itself is unchanged. Algorithm `"survey"` is
+removed. The history `operation` field reads `"calibrate_rake"`, not
+`"raking"`.
+
+### `calibrate()` is a dispatcher
+
+`calibrate()` now routes to `calibrate_rake()`, `calibrate_linear()`, or
+`calibrate_logit()`. The `method` argument changes from
+`c("linear", "logit")` with default `"linear"` to
+`c("rake", "linear", "logit")` with default `"rake"`. One `targets` argument
+replaces `variables` and `population`. Code that relied on the old default
+should call `calibrate_linear()`.
+
+### `poststratify()` takes `targets`
+
+`poststratify(data, strata, population, ...)` becomes
+`poststratify(data, targets, ...)`. `targets` is one data frame. Every column
+except `target` names a stratifying variable.
+
+### `create_jackknife_weights()` type values are renamed
+
+| Old | New |
+|---|---|
+| `type = "delete-1"` | `type = "jkn"` (stratified) or `type = "jk1"` (unstratified) |
+| `type = "random-groups"` | `type = "grouped"` |
+
+`type = "delete-1"` read the design and chose JKn or JK1 for the caller. The
+caller now names the one they want. The delete-a-group jackknife for
+non-probability samples arrives on the same argument, as `type = "grouped"`
+with a `survey_nonprob` input.
+
+### `create_bootstrap_weights()` reads `mse` as a string
+
+`mse` moves from `TRUE` or `FALSE` to `"mse"` (the default),
+`"chrostowski"`, or `"uncentered"`. Replace `mse = FALSE` with
+`mse = "uncentered"`.
+
+The `replicates` default moves from `500L` to `NULL`. `NULL` resolves to
+`500L` for the probability-sample types and to `200L` for
+`type = "quasi-randomization"`.
+
+### All weighting functions now require survey objects
+
+All calibration, nonresponse, utility, and diagnostic functions
+(`calibrate()`, `calibrate_rake()`, `calibrate_linear()`, `calibrate_logit()`,
+`poststratify()`, `adjust_nonresponse()`, `redistribute_weights()`,
+`trim_weights()`, `rescale_weights()`, `effective_sample_size()`,
+`weight_variability()`, `summarize_weights()`) now require a `survey_taylor`,
+`survey_nonprob`, or `survey_replicate` object as the `data` (or `x`) argument.
+Plain `data.frame` and `weighted_df` inputs now throw
+`surveywts_error_not_survey_base`.
+
+The `weighted_df` S3 class and all associated infrastructure have been
+removed: `.make_weighted_df()`, `dplyr_reconstruct.weighted_df()`,
+`print.weighted_df()`, and the `weight_col` / `weighting_history` attributes
+are no longer part of the package.
+
+### `wt_name` default changed from `"wts"` to `NULL`
+
+All weighting functions that accept a `wt_name` argument now default to
+`wt_name = NULL`. When `NULL`, calibrated / adjusted weights overwrite the
+existing weight column in-place. When a character scalar, a new column is
+created and `@variables$weights` is updated to point to it.
+
+### `calibrate_to_survey()` — native Opsomer algorithm replaces svrep delegation
+
+`calibrate_to_survey()` now implements the Opsomer & Erciulescu (2022)
+replication variance adjustment natively. The svrep delegation (via
+`svrep::calibrate_to_sample()`) has been removed from the main calibration
+path. Existing calls with `targets = NULL` will continue to produce
+calibrated designs, but the replicate weight adjustment now uses the Opsomer
+algorithm directly rather than delegating to svrep. Numerical results may
+differ slightly from prior versions.
+
+The default calibration method is now `method = "rake"`. The prior
+svrep-based path used linear GREG by default; callers who need that
+behavior should supply `method = "linear"` explicitly.
+
+### `calibrate_to_survey()` history entry schema change
+
+The weighting history entry produced by `calibrate_to_survey()` now promotes
+`K`, `a_constants`, `targets`, `type`, and `fixed_variables` as top-level
+fields on the history entry (in addition to being stored under `parameters`).
+Code that accessed these values via `entry$parameters$K` should now use
+`entry$K` instead. The `parameters` sub-list retains all fields for backward
+compatibility.
 
 ## Bug fixes
 
@@ -128,6 +329,66 @@
   differ. `create_gen_rep_weights()` now points at `seed` when it keeps a
   random sample of the replicates and no seed was given.
 
+* The quasi-randomization bootstrap left `@variables$scale`,
+  `@variables$rscales`, `@variables$type`, and `@variables$mse` empty on the
+  `survey_nonprob` it returned (#78). `calibrate_to_survey()` reads `scale`,
+  so it threw `surveywts_error_scale_not_found` when a bootstrapped design
+  arrived as `primary_design` or `control_design`. All four fields are now
+  set: `scale` is `1 / draws_used`, `rscales` holds one 1 per draw, `type` is
+  `"bootstrap"`, and `mse` follows the `mse` argument.
+
+* `cap = NULL` applied a cap of 5 in the raking engine, the
+  `anesrake::anesrake()` default. `cap = NULL` now means no cap.
+
+## Datasets
+
+### New datasets
+
+Seven tibble datasets replace the previous IPW-only reference designs:
+
+* `gss_2024`: GSS 2024 (3,309 rows, 32 columns) with derived `age_f3`,
+  `race_f4`, `pid_f3`, `edu_f3`, and `wt_pop` columns.
+* `ns_wave1`: National Survey Wave 1 (6,422 rows, 185 columns) with derived
+  `age_f3`, `race_f4`, `pid_f3`, and `edu_f3` columns; `gender` converted
+  to factor.
+* `npors_2025`: Pew NPORS 2025 (5,022 rows, 71 columns) with derived
+  `gender` (factor), `age_f3`, `race_f4`, `pid_f3`, `edu_f3`, and `wt_pop`
+  columns.
+* `npors_2025_clean`: `npors_2025` filtered to complete cases on the
+  derived columns (4,814 rows).
+* `cps_2023`: CPS ASEC 2023 (9,999 rows, 187 columns) with derived
+  `age_f3`, `race_f4`, and `edu_f3` columns.
+* `pew_2016_optin`: Pew 2016 opt-in sample (2,000 rows, 305 columns).
+* `pew_2016_synth_pop`: Pew 2016 synthetic population (20,000 rows,
+  43 columns).
+
+No survey design companion objects are shipped. Examples construct designs
+from the tibbles with `surveycore::as_survey()` or
+`surveycore::as_survey_nonprob()`.
+
+### Retired datasets
+
+The following datasets have been removed. Update code that references them:
+
+| Old name | Replacement |
+|---|---|
+| `ns_wave1_ipw` | `ns_wave1` |
+| `gss_ipw_ref` | `gss_2024` + `surveycore::as_survey(gss_2024, weights = wt_pop, ...)` |
+| `npors_2025_ref` | `npors_2025` |
+| `npors_2025_clean_ref` | `npors_2025_clean` |
+| `acs_ipw_ref` | removed without replacement (the ACS reference is retired) |
+
+### `ipw()` examples updated
+
+The bundled examples in `?ipw` now use the new dataset names. Reference
+designs for IPW are constructed from tibbles using `surveycore::as_survey()`:
+```r
+gss_ref <- surveycore::as_survey(
+  gss_2024, weights = wt_pop, strata = vstrat, ids = vpsu, nest = TRUE
+)
+result <- ipw(ns_wave1, gss_ref, selection = ~sex + age_f3)
+```
+
 ## Internal
 
 * No test held `create_sdr_weights()` to the SDR variance scale factor
@@ -183,102 +444,10 @@
 * Remove stale `weighted_df` references left after PR #86 — source comments,
   roxygen `@param` docs, and test descriptions updated throughout.
 
-## Breaking changes
-
-### All weighting functions now require survey objects
-
-All calibration, nonresponse, utility, and diagnostic functions
-(`calibrate()`, `calibrate_rake()`, `calibrate_linear()`, `calibrate_logit()`,
-`poststratify()`, `adjust_nonresponse()`, `redistribute_weights()`,
-`trim_weights()`, `rescale_weights()`, `effective_sample_size()`,
-`weight_variability()`, `summarize_weights()`) now require a `survey_taylor`,
-`survey_nonprob`, or `survey_replicate` object as the `data` (or `x`) argument.
-Plain `data.frame` and `weighted_df` inputs now throw
-`surveywts_error_not_survey_base`.
-
-The `weighted_df` S3 class and all associated infrastructure have been
-removed: `.make_weighted_df()`, `dplyr_reconstruct.weighted_df()`,
-`print.weighted_df()`, and the `weight_col` / `weighting_history` attributes
-are no longer part of the package.
-
-### `wt_name` default changed from `"wts"` to `NULL`
-
-All weighting functions that accept a `wt_name` argument now default to
-`wt_name = NULL`. When `NULL`, calibrated / adjusted weights overwrite the
-existing weight column in-place. When a character scalar, a new column is
-created and `@variables$weights` is updated to point to it.
-
-### `calibrate_to_survey()` — native Opsomer algorithm replaces svrep delegation
-
-`calibrate_to_survey()` now implements the Opsomer & Erciulescu (2022)
-replication variance adjustment natively. The svrep delegation (via
-`svrep::calibrate_to_sample()`) has been removed from the main calibration
-path. Existing calls with `targets = NULL` will continue to produce
-calibrated designs, but the replicate weight adjustment now uses the Opsomer
-algorithm directly rather than delegating to svrep. Numerical results may
-differ slightly from prior versions.
-
-The default calibration method is now `method = "rake"`. The prior
-svrep-based path used linear GREG by default; callers who need that
-behavior should supply `method = "linear"` explicitly.
-
-### `calibrate_to_survey()` history entry schema change
-
-The weighting history entry produced by `calibrate_to_survey()` now promotes
-`K`, `a_constants`, `targets`, `type`, and `fixed_variables` as top-level
-fields on the history entry (in addition to being stored under `parameters`).
-Code that accessed these values via `entry$parameters$K` should now use
-`entry$K` instead. The `parameters` sub-list retains all fields for backward
-compatibility.
-
-## Datasets
-
-### New datasets
-
-Seven tibble datasets replace the previous IPW-only reference designs:
-
-* `gss_2024`: GSS 2024 (3,309 rows, 32 columns) with derived `age_f3`,
-  `race_f4`, `pid_f3`, `edu_f3`, and `wt_pop` columns.
-* `ns_wave1`: National Survey Wave 1 (6,422 rows, 185 columns) with derived
-  `age_f3`, `race_f4`, `pid_f3`, and `edu_f3` columns; `gender` converted
-  to factor.
-* `npors_2025`: Pew NPORS 2025 (5,022 rows, 71 columns) with derived
-  `gender` (factor), `age_f3`, `race_f4`, `pid_f3`, `edu_f3`, and `wt_pop`
-  columns.
-* `npors_2025_clean`: `npors_2025` filtered to complete cases on the
-  derived columns (4,814 rows).
-* `cps_2023`: CPS ASEC 2023 (9,999 rows, 187 columns) with derived
-  `age_f3`, `race_f4`, and `edu_f3` columns.
-* `pew_2016_optin`: Pew 2016 opt-in sample (2,000 rows, 305 columns).
-* `pew_2016_synth_pop`: Pew 2016 synthetic population (20,000 rows,
-  43 columns).
-
-No survey design companion objects are shipped. Examples construct designs
-from the tibbles with `surveycore::as_survey()` or
-`surveycore::as_survey_nonprob()`.
-
-### Retired datasets
-
-The following datasets have been removed. Update code that references them:
-
-| Old name | Replacement |
-|---|---|
-| `ns_wave1_ipw` | `ns_wave1` |
-| `gss_ipw_ref` | `gss_2024` + `surveycore::as_survey(gss_2024, weights = wt_pop, ...)` |
-| `npors_2025_ref` | `npors_2025` |
-| `npors_2025_clean_ref` | `npors_2025_clean` |
-| `acs_ipw_ref` | removed without replacement (the ACS reference is retired) |
-
-### `ipw()` examples updated
-
-The bundled examples in `?ipw` now use the new dataset names. Reference
-designs for IPW are constructed from tibbles using `surveycore::as_survey()`:
-```r
-gss_ref <- surveycore::as_survey(
-  gss_2024, weights = wt_pop, strata = vstrat, ids = vpsu, nest = TRUE
-)
-result <- ipw(ns_wave1, gss_ref, selection = ~sex + age_f3)
-```
+* Dependency changes. `svrep (>= 0.9.1)` and `nleqslv (>= 3.3.2)` move to
+  Imports. `anesrake` moves to Suggests, because the raking engine is now
+  ported into the package and `anesrake` is used only for parity tests. The
+  minimum `surveycore` version is 1.0.0.
 
 # surveywts 0.2.0
 
