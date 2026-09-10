@@ -1,9 +1,12 @@
 # surveywts
 
-surveywts provides tidy tools for calibrating survey weights to known
-population totals, adjusting for nonresponse, and diagnosing weight
-quality — all with full weighting history tracking for reproducible
-survey analysis.
+Part of the [surveyverse](https://github.com/JDenn0514), surveywts is
+the one-stop shop for survey weighting. It covers the full weight
+adjustment workflow: calibrating to population benchmarks, handling unit
+nonresponse, weighting non-probability samples via inverse probability
+weighting, generating replicate weights for variance estimation, and
+diagnosing weight quality, all with a full audit trail recorded on the
+result object.
 
 ## Installation
 
@@ -16,31 +19,193 @@ pak::pak("JDenn0514/surveywts")
 install.packages("surveywts", repos = "https://jdenn0514.r-universe.dev")
 ```
 
-## Overview
+## The surveyverse
 
-surveywts is part of the [surveyverse](https://github.com/JDenn0514)
-ecosystem. It provides three calibration methods, nonresponse
-adjustment, and weight diagnostics — all using tidy, formula-free
-syntax.
+surveywts is the weighting layer of the surveyverse ecosystem.
+[surveycore](https://jdenn0514.github.io/surveycore/) is the foundation,
+representing sampling designs and enabling analysis. surveywts operates
+on the survey objects surveycore creates, adjusting and calibrating
+their weights. [surveytidy](https://jdenn0514.github.io/surveytidy/)
+rounds out the ecosystem with tidy data manipulation for survey objects.
+
+## Functions
+
+### Calibration
 
 | Function | Purpose |
 |----|----|
-| [`calibrate()`](https://jdenn0514.github.io/surveywts/reference/calibrate.md) | GREG calibration to population totals |
-| [`rake()`](https://jdenn0514.github.io/surveywts/reference/rake.md) | Raking (iterative proportional fitting) |
-| [`poststratify()`](https://jdenn0514.github.io/surveywts/reference/poststratify.md) | Post-stratification to cell counts or proportions |
-| [`adjust_nonresponse()`](https://jdenn0514.github.io/surveywts/reference/adjust_nonresponse.md) | Nonresponse adjustment via weighting classes |
-| [`effective_sample_size()`](https://jdenn0514.github.io/surveywts/reference/effective_sample_size.md) | ESS (Kish approximation) |
-| [`weight_variability()`](https://jdenn0514.github.io/surveywts/reference/weight_variability.md) | CV and design effect of weights |
-| [`summarize_weights()`](https://jdenn0514.github.io/surveywts/reference/summarize_weights.md) | Summary statistics, optionally by group |
+| [`calibrate()`](https://jdenn0514.github.io/surveywts/reference/calibrate.md) | Calibrate to population `targets`; choose method with `method = "rake"`, `"linear"`, or `"logit"` |
+| [`calibrate_linear()`](https://jdenn0514.github.io/surveywts/reference/calibrate_linear.md) | Linear (GREG) calibration |
+| [`calibrate_rake()`](https://jdenn0514.github.io/surveywts/reference/calibrate_rake.md) | Raking (iterative proportional fitting) |
+| [`calibrate_logit()`](https://jdenn0514.github.io/surveywts/reference/calibrate_logit.md) | Logit-bounded calibration (guaranteed positive weights) |
+| [`poststratify()`](https://jdenn0514.github.io/surveywts/reference/poststratify.md) | Exact cell-level post-stratification |
+| [`calibrate_to_survey()`](https://jdenn0514.github.io/surveywts/reference/calibrate_to_survey.md) | Calibrate against a control survey, propagating its sampling uncertainty |
+| [`calibrate_to_estimate()`](https://jdenn0514.github.io/surveywts/reference/calibrate_to_estimate.md) | Calibrate against external estimates with a known variance-covariance matrix |
 
-Every function tracks the full weighting history so you can audit
-exactly what transformations were applied and in what order.
+### Nonresponse adjustment
+
+| Function | Purpose |
+|----|----|
+| [`adjust_nonresponse()`](https://jdenn0514.github.io/surveywts/reference/adjust_nonresponse.md) | Nonresponse adjustment via weighting class, propensity cell, or propensity score |
+| [`redistribute_weights()`](https://jdenn0514.github.io/surveywts/reference/redistribute_weights.md) | Low-level weight redistribution between any two groups |
+
+### Non-probability samples
+
+| Function | Purpose |
+|----|----|
+| [`ipw()`](https://jdenn0514.github.io/surveywts/reference/ipw.md) | Inverse probability weighting via logistic regression (pseudo-likelihood or calibration GEE) |
+
+### Replicate weights
+
+| Function | Purpose |
+|----|----|
+| [`create_replicate_weights()`](https://jdenn0514.github.io/surveywts/reference/create_replicate_weights.md) | Dispatcher for all replicate weight methods |
+| [`create_bootstrap_weights()`](https://jdenn0514.github.io/surveywts/reference/create_bootstrap_weights.md) | Bootstrap replicate weights (Rao-Wu-Yue-Beaumont; quasi-randomization for NPS) |
+| [`create_jackknife_weights()`](https://jdenn0514.github.io/surveywts/reference/create_jackknife_weights.md) | Jackknife replicate weights (`type = "jk1"`, `"jkn"`, or `"grouped"`) |
+| [`create_brr_weights()`](https://jdenn0514.github.io/surveywts/reference/create_brr_weights.md) | Balanced repeated replication (standard or Fay’s variant) |
+| [`create_gen_boot_weights()`](https://jdenn0514.github.io/surveywts/reference/create_gen_boot_weights.md) | Generalized bootstrap weights |
+| [`create_gen_rep_weights()`](https://jdenn0514.github.io/surveywts/reference/create_gen_rep_weights.md) | Generalized replication weights (Fay’s method) |
+| [`create_sdr_weights()`](https://jdenn0514.github.io/surveywts/reference/create_sdr_weights.md) | Successive difference replication |
+| [`as_taylor_design()`](https://jdenn0514.github.io/surveywts/reference/as_taylor_design.md) | Convert a replicate design back to Taylor linearization |
+
+### Diagnostics
+
+| Function | Purpose |
+|----|----|
+| [`effective_sample_size()`](https://jdenn0514.github.io/surveywts/reference/effective_sample_size.md) | Kish effective sample size |
+| [`weight_variability()`](https://jdenn0514.github.io/surveywts/reference/weight_variability.md) | Coefficient of variation of the weights |
+| [`summarize_weights()`](https://jdenn0514.github.io/surveywts/reference/summarize_weights.md) | Full distributional summary, optionally by group |
+
+### Utilities
+
+| Function | Purpose |
+|----|----|
+| [`trim_weights()`](https://jdenn0514.github.io/surveywts/reference/trim_weights.md) | Clip extreme weights with mass redistribution |
+| [`rescale_weights()`](https://jdenn0514.github.io/surveywts/reference/rescale_weights.md) | Rescale weights to unit mean |
 
 ## Usage
+
+### Weighting a non-probability sample
+
+[`ipw()`](https://jdenn0514.github.io/surveywts/reference/ipw.md)
+constructs weights for a non-probability sample by fitting a
+participation propensity model against a probability reference survey.
+surveywts ships with a harmonized online panel (`ns_wave1`) and
+probability reference surveys (`gss_2024`, `npors_2025_clean`,
+`cps_2023`) to illustrate the workflow. Survey designs are constructed
+from the tibbles with
+[`surveycore::as_survey()`](https://jdenn0514.github.io/surveycore/reference/as_survey.html)
+or
+[`surveycore::as_survey_nonprob()`](https://jdenn0514.github.io/surveycore/reference/as_survey_nonprob.html).
 
 ``` r
 
 library(surveywts)
+
+# Construct a reference design from the npors_2025_clean tibble
+npors_ref <- surveycore::as_survey(
+  npors_2025_clean,
+  weights = wt_pop,
+  strata = stratum
+)
+
+# Drop the 7 rows with NA partisanship (pid_f3) — the benchmark variable
+# in the calibrate-to-survey step below.
+ns_complete <- ns_wave1[!is.na(ns_wave1$pid_f3), ]
+
+nps_wts <- ipw(
+  ns_complete,
+  npors_ref,
+  predictors = c("sex", "age_f3", "race_f4", "edu_f3"),
+  missing_method = "omit",
+  estimating_eq = "mle" # keeps the per-replicate refits below stable
+)
+#> Warning: ! 120 row(s) in `data` dropped: NA in race_f4.
+#> ℹ Rows with any NA in a `selection` variable are excluded when `missing_method
+#>   = "omit"`.
+#> ✔ Use `missing_method = "separate"` or `missing_method = "impute"` to retain
+#>   rows with NA.
+
+summarize_weights(nps_wts)
+#> # A tibble: 1 × 11
+#>       n n_positive n_zero   mean    cv    min    p25    p50    p75     max   ess
+#>   <int>      <int>  <int>  <dbl> <dbl>  <dbl>  <dbl>  <dbl>  <dbl>   <dbl> <dbl>
+#> 1  6295       6295      0 39944. 0.936 13052. 17535. 26423. 42933. 370516. 3355.
+effective_sample_size(nps_wts)
+#>    n_eff 
+#> 3355.106
+```
+
+### Calibrating to population benchmarks
+
+[`calibrate()`](https://jdenn0514.github.io/surveywts/reference/calibrate.md)
+adjusts weights to match known population `targets`. Here we rake the
+IPW-weighted panel to census marginals for a doubly robust estimate.
+
+``` r
+
+targets <- list(
+  sex = c("Male" = 0.49, "Female" = 0.51),
+  age_f3 = c("18-34" = 0.28, "35-54" = 0.37, "55+" = 0.35)
+)
+
+calibrated <- calibrate(
+  nps_wts,
+  targets = targets,
+  method = "rake"
+)
+
+summarize_weights(calibrated)
+#> # A tibble: 1 × 11
+#>       n n_positive n_zero  mean    cv   min   p25   p50   p75   max   ess
+#>   <int>      <int>  <int> <dbl> <dbl> <dbl> <dbl> <dbl> <dbl> <dbl> <dbl>
+#> 1  6295       6295      0     1 0.893 0.339 0.507 0.610  1.11  8.56 3503.
+```
+
+### Calibrating to a reference survey
+
+[`calibrate_to_survey()`](https://jdenn0514.github.io/surveywts/reference/calibrate_to_survey.md)
+calibrates a primary design to match estimates from a control survey,
+propagating the control’s own sampling uncertainty into the final
+variance estimates. Both designs must carry replicate weights. Here the
+IPW-weighted panel is benchmarked to the NPORS estimate of partisanship
+(`pid_f3`).
+
+``` r
+
+# Primary: the IPW-weighted panel with quasi-randomization bootstrap
+# replicates. Each replicate resamples the panel and refits the IPW model.
+nps_rep <- create_bootstrap_weights(
+  nps_wts,
+  type = "quasi-randomization",
+  replicates = 100L,
+  seed = 1
+)
+
+# Control: the NPORS reference survey with bootstrap replicate weights.
+npors_rep <- create_bootstrap_weights(npors_ref, seed = 1)
+
+calibrated_to_ref <- calibrate_to_survey(
+  nps_rep,
+  npors_rep,
+  variables = c(pid_f3)
+)
+```
+
+### Generating replicate weights
+
+[`create_bootstrap_weights()`](https://jdenn0514.github.io/surveywts/reference/create_bootstrap_weights.md)
+adds replicate weight columns for variance estimation. For
+non-probability samples it applies a quasi-randomization bootstrap.
+
+``` r
+
+rep_design <- create_bootstrap_weights(
+  calibrated,
+  type       = "quasi-randomization",
+  replicates = 100L,
+  seed       = 1
+)
 ```
 
 ## Learn more
@@ -55,48 +220,117 @@ Full documentation is available at
 Functions for calibrating survey weights to known population totals.
 
 - [`calibrate()`](https://jdenn0514.github.io/surveywts/reference/calibrate.md)
-  : Calibrate survey weights to known population totals
-- [`rake()`](https://jdenn0514.github.io/surveywts/reference/rake.md) :
-  Rake survey weights to marginal population totals
+  : Adjust weights to match population totals
+- [`calibrate_linear()`](https://jdenn0514.github.io/surveywts/reference/calibrate_linear.md)
+  : Fit weights using linear (GREG) calibration
+- [`calibrate_logit()`](https://jdenn0514.github.io/surveywts/reference/calibrate_logit.md)
+  : Fit weights using logit-bounded calibration
+- [`calibrate_rake()`](https://jdenn0514.github.io/surveywts/reference/calibrate_rake.md)
+  : Fit weights using raking
 - [`poststratify()`](https://jdenn0514.github.io/surveywts/reference/poststratify.md)
-  : Post-stratify survey weights to known joint population cell totals
+  : Fit weights using post-stratification
+
+## Sample-Based Calibration
+
+Functions for calibrating replicate-weight designs to a control survey
+or to estimated totals with uncertainty.
+
+- [`calibrate_to_survey()`](https://jdenn0514.github.io/surveywts/reference/calibrate_to_survey.md)
+  : Reweight to population totals estimated from a control survey
+- [`calibrate_to_estimate()`](https://jdenn0514.github.io/surveywts/reference/calibrate_to_estimate.md)
+  : Reweight to externally estimated population totals
+
+## Propensity Weighting
+
+Functions for inverse probability weighting of non-probability samples.
+
+- [`ipw()`](https://jdenn0514.github.io/surveywts/reference/ipw.md) :
+  Estimate inverse probability weights for a non-probability sample
+
+## Example Datasets
+
+Bundled datasets for IPW examples and calibration examples.
+
+### Non-probability sample
+
+Bundled datasets for IPW examples and calibration examples.
+
+- [`ns_wave1`](https://jdenn0514.github.io/surveywts/reference/ns_wave1.md)
+  : National Survey Wave 1 with harmonized demographic columns
+
+### Probability reference surveys
+
+- [`cps_2023`](https://jdenn0514.github.io/surveywts/reference/cps_2023.md)
+  : CPS ASEC 2023 national adult sample with harmonized demographic
+  columns
+- [`gss_2024`](https://jdenn0514.github.io/surveywts/reference/gss_2024.md)
+  : GSS 2024 sample data with harmonized demographic columns
+- [`npors_2025`](https://jdenn0514.github.io/surveywts/reference/npors_2025.md)
+  : Pew NPORS 2025 probability sample with harmonized demographic
+  columns
+- [`npors_2025_clean`](https://jdenn0514.github.io/surveywts/reference/npors_2025_clean.md)
+  : Pew NPORS 2025 complete cases only
+
+### Calibration example data
+
+- [`pew_2016_optin`](https://jdenn0514.github.io/surveywts/reference/pew_2016_optin.md)
+  : Pew 2016 ATP opt-in sample
+- [`pew_2016_synth_pop`](https://jdenn0514.github.io/surveywts/reference/pew_2016_synth_pop.md)
+  : Pew 2016 ATP synthetic population
 
 ## Nonresponse Adjustment
 
 Functions for adjusting survey weights for unit nonresponse.
 
 - [`adjust_nonresponse()`](https://jdenn0514.github.io/surveywts/reference/adjust_nonresponse.md)
-  : Adjust survey weights for unit nonresponse
+  : Correct weights for unit nonresponse
+- [`redistribute_weights()`](https://jdenn0514.github.io/surveywts/reference/redistribute_weights.md)
+  : Transfer weight from excluded rows to retained rows
 
 ## Replicate Weights
 
 Functions for creating replicate weights for variance estimation.
 
 - [`create_bootstrap_weights()`](https://jdenn0514.github.io/surveywts/reference/create_bootstrap_weights.md)
-  : Create bootstrap replicate weights
+  : Generate bootstrap replicate weights
 - [`create_jackknife_weights()`](https://jdenn0514.github.io/surveywts/reference/create_jackknife_weights.md)
-  : Create jackknife replicate weights
+  : Construct jackknife replicate weights
 - [`create_brr_weights()`](https://jdenn0514.github.io/surveywts/reference/create_brr_weights.md)
-  : Create BRR (Fay) replicate weights
+  : Generate BRR (Fay) replicate weights
 - [`create_gen_boot_weights()`](https://jdenn0514.github.io/surveywts/reference/create_gen_boot_weights.md)
-  : Create generalized bootstrap replicate weights
+  : Generate generalized bootstrap replicate weights
 - [`create_gen_rep_weights()`](https://jdenn0514.github.io/surveywts/reference/create_gen_rep_weights.md)
-  : Create generalized replication replicate weights
+  : Generate generalized replication replicate weights
 - [`create_sdr_weights()`](https://jdenn0514.github.io/surveywts/reference/create_sdr_weights.md)
-  : Create successive difference replication (SDR) weights
+  : Generate successive difference replication weights
 - [`create_replicate_weights()`](https://jdenn0514.github.io/surveywts/reference/create_replicate_weights.md)
-  : Create replicate weights (dispatcher)
+  : Generate replicate weights for a survey design
 - [`as_taylor_design()`](https://jdenn0514.github.io/surveywts/reference/as_taylor_design.md)
   : Convert a replicate design back to a Taylor design
+
+## Weight Utilities
+
+Functions for trimming and rescaling survey weights.
+
+- [`trim_weights()`](https://jdenn0514.github.io/surveywts/reference/trim_weights.md)
+  : Clip weights to a bounded interval
+- [`rescale_weights()`](https://jdenn0514.github.io/surveywts/reference/rescale_weights.md)
+  : Rescale survey weights to a target mean or sum
 
 ## Diagnostics
 
 Functions for assessing the distribution and quality of survey weights.
 
 - [`effective_sample_size()`](https://jdenn0514.github.io/surveywts/reference/effective_sample_size.md)
-  : Kish's effective sample size
+  : Estimate Kish's effective sample size of weighted data
 - [`weight_variability()`](https://jdenn0514.github.io/surveywts/reference/weight_variability.md)
-  : Coefficient of variation of survey weights
+  : Measure how unequal the survey weights are
 - [`summarize_weights()`](https://jdenn0514.github.io/surveywts/reference/summarize_weights.md)
-  : Summarize the distribution of survey weights
+  : Report summary statistics for the weight distribution
 
+# Articles
+
+### All vignettes
+
+- [Getting started with
+  surveywts](https://jdenn0514.github.io/surveywts/articles/getting-started.md):

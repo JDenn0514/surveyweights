@@ -1,7 +1,12 @@
-# Kish's effective sample size
+# Estimate Kish's effective sample size of weighted data
 
-Computes the effective sample size using Kish's formula: \$\$ESS =
-\frac{(\sum w)^2}{\sum w^2}\$\$
+The effective sample size (ESS) measures how much statistical precision
+the weighted sample retains relative to an equal-sized simple random
+sample. Higher weight variability reduces the ESS, resulting in higher
+variance for weighted estimates. Rows with zero weights (typically
+produced by
+[`adjust_nonresponse()`](https://jdenn0514.github.io/surveywts/reference/adjust_nonresponse.md))
+are excluded before computing ESS.
 
 ## Usage
 
@@ -13,21 +18,34 @@ effective_sample_size(x, weights = NULL)
 
 - x:
 
-  A `data.frame`, `weighted_df`, `survey_taylor`, or `survey_nonprob`.
-  For `weighted_df` and survey objects, the weight column is
-  auto-detected.
+  A `survey_taylor`, `survey_nonprob`, or `survey_replicate`. The weight
+  column is auto-detected from `@variables$weights`.
 
 - weights:
 
-  Bare name (NSE). Weight column. Auto-detected for `weighted_df` and
-  survey objects. Required for plain `data.frame`.
+  Bare name (NSE). Weight column. Auto-detected from survey object
+  `@variables$weights`.
 
 ## Value
 
 A named numeric scalar: `c(n_eff = <value>)`. The name `"n_eff"` is part
 of the API contract.
 
+## Algorithm
+
+\$\$ESS = \frac{(\sum w)^2}{\sum w^2}\$\$
+
+## References
+
+Kish, L. (1965). *Survey Sampling*. New York: John Wiley & Sons.
+
 ## See also
+
+[`weight_variability()`](https://jdenn0514.github.io/surveywts/reference/weight_variability.md),
+[`summarize_weights()`](https://jdenn0514.github.io/surveywts/reference/summarize_weights.md).
+For the class system, the standard workflows, and a glossary of terms,
+see the [Getting started
+article](https://jdenn0514.github.io/surveywts/articles/getting-started.html).
 
 Other diagnostics:
 [`summarize_weights()`](https://jdenn0514.github.io/surveywts/reference/summarize_weights.md),
@@ -36,8 +54,10 @@ Other diagnostics:
 ## Examples
 
 ``` r
-df <- data.frame(x = 1:5, w = c(1.2, 0.8, 1.5, 0.9, 1.1))
-effective_sample_size(df, weights = w)
-#>   n_eff 
-#> 4.76378 
+ns_wave1_svy <- surveycore::as_survey_nonprob(ns_wave1, weights = weight)
+effective_sample_size(ns_wave1_svy)
+#>    n_eff 
+#> 2254.539 
+#>    n_eff
+#> 2254.539
 ```

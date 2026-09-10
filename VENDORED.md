@@ -1,8 +1,9 @@
 # External Algorithm Delegation
 
 This file documents the external packages that `surveywts` delegates
-calibration algorithms to. All packages are listed in `DESCRIPTION`
-Imports.
+calibration algorithms to, and algorithms that were ported from external
+packages into internal helpers. Delegated packages are listed in
+`DESCRIPTION` Imports; ported packages are in `Suggests`.
 
 ------------------------------------------------------------------------
 
@@ -35,7 +36,7 @@ within 1e-8 tolerance in `tests/testthat/test-02-calibrate.R`,
 
 ------------------------------------------------------------------------
 
-## anesrake (\>= 0.80)
+## anesrake (ported — `Suggests` only)
 
 | Field    | Value                                         |
 |----------|-----------------------------------------------|
@@ -43,24 +44,41 @@ within 1e-8 tolerance in `tests/testthat/test-02-calibrate.R`,
 | License  | GPL-2+                                        |
 | CRAN URL | <https://cran.r-project.org/package=anesrake> |
 
-**Functions used by `.calibrate_engine()`:**
+**Status:** Algorithm ported to `R/rake-anesrake-engine.R` as internal
+helpers. `anesrake` is no longer an `Imports` dependency — it is listed
+in `Suggests` and used only for numerical parity tests.
 
-- [`anesrake::anesrake()`](https://rdrr.io/pkg/anesrake/man/anesrake.html)
-  — IPF raking with chi-square variable selection
+**Ported internal helpers (in `R/rake-anesrake-engine.R`):**
+
+- `.rake_anesrake()` — top-level engine; replaces
+  [`anesrake::anesrake()`](https://rdrr.io/pkg/anesrake/man/anesrake.html)
+- `.rake_list()` — iterative proportional fitting loop with capping;
+  replaces
+  [`anesrake::rakelist()`](https://rdrr.io/pkg/anesrake/man/rakelist.html)
+- Supporting helpers ported from anesrake source
 
 **Notes:**
 
-- [`anesrake::anesrake()`](https://rdrr.io/pkg/anesrake/man/anesrake.html)
-  is called with `force1 = FALSE` to preserve total weight (consistent
-  with [`survey::rake()`](https://rdrr.io/pkg/survey/man/rake.html)
+- The ported engine preserves `force1 = FALSE` semantics (total weight
+  is conserved, consistent with
+  [`survey::rake()`](https://rdrr.io/pkg/survey/man/rake.html)
   behaviour).
-- Convergence is detected from the `$converge` character field:
-  `"Complete convergence was achieved"` or `"Results are stable..."` are
-  treated as converged.
-- When all variables already meet their margins,
-  [`anesrake::selecthighestpcts()`](https://rdrr.io/pkg/anesrake/man/anesrakefinder.html)
-  throws an error which is caught and translated to a
-  `surveywts_message_already_calibrated` message.
+- Convergence is detected from a character field on the result:
+  `"Complete convergence was achieved"` or `"Results are stable..."`.
+- When all variables already meet their margins, `.rake_anesrake()`
+  emits a `surveywts_message_already_calibrated` message (matching the
+  original).
+- `cap = NULL` correctly means no cap (`Inf` internally). Previously,
+  delegating to
+  [`anesrake::anesrake()`](https://rdrr.io/pkg/anesrake/man/anesrake.html)
+  silently applied the package default of `cap = 5`.
+- Pre-cap weight vectors are captured after each full variable sweep and
+  returned as the `capping` field in `weighting_history` entries.
+
+**Numerical correctness verified** against
+[`anesrake::anesrake()`](https://rdrr.io/pkg/anesrake/man/anesrake.html)
+within 1e-8 tolerance in `tests/testthat/test-03-rake.R` (parity tests
+guarded with `skip_if_not_installed("anesrake")`).
 
 ------------------------------------------------------------------------
 
